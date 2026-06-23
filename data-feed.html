@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<!--
+  This page is NOT meant to be viewed in a browser as a webpage.
+  It is a data feed: Excel's Power Query (Data > Get Data > From Web)
+  reads this URL and parses the JSON it outputs.
+
+  How it works:
+  1. This page loads, connects to Firebase, reads the live "sessions" data
+  2. It outputs that data as raw JSON text (nothing else — no styling, no menu)
+  3. Power Query parses that JSON into an Excel table automatically
+-->
+<html>
+<head><meta charset="UTF-8" /></head>
+<body>
+<pre id="output">Loading…</pre>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+(async function() {
+  const firebaseConfig = {
+    apiKey: "AIzaSyBqLdbPBn2V8tPSlJ8Q2LEmBKy1o7FtEa0",
+    authDomain: "timetable-23438.firebaseapp.com",
+    projectId: "timetable-23438",
+    storageBucket: "timetable-23438.firebasestorage.app",
+    messagingSenderId: "577386132793",
+    appId: "1:577386132793:web:c59f591e1450fcf88424e8"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
+
+  try {
+    const snap = await db.collection('sessions').get();
+    const rows = snap.docs.map(doc => {
+      const d = doc.data();
+      return {
+        Week:                 d.week ?? '',
+        Date:                 d.date ?? '',
+        Day:                  d.day ?? '',
+        "Start Time":         d.startTime ?? '',
+        "End Time":           d.endTime ?? '',
+        Course:               d.course ?? '',
+        Type:                 d.type ?? '',
+        Topic:                d.topic ?? '',
+        "# of Instructors":   d.numInstructors ?? '',
+        "Primary Instructor": d.primaryInstructor ?? '',
+        "Secondary Instructor": d.secondaryInstructor ?? '',
+        "Finalized Instructors": d.finalizedInstructors ?? '',
+        Notes:                d.notes ?? ''
+      };
+    });
+    // Sort by date then start time for a sensible default order
+    rows.sort((a,b) => (a.Date||'').localeCompare(b.Date||'') || (a["Start Time"]||'').localeCompare(b["Start Time"]||''));
+
+    document.getElementById('output').textContent = JSON.stringify(rows, null, 2);
+  } catch (err) {
+    document.getElementById('output').textContent = JSON.stringify({ error: err.message }, null, 2);
+  }
+})();
+</script>
+</body>
+</html>
