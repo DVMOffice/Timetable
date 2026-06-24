@@ -212,10 +212,9 @@
     const unfinalized = !s.finalizedInstructors || s.finalizedInstructors.trim()==='';
     const bg = unfinalized ? '#FFFBEB' : '#EAF0FB';
     const dot = unfinalized ? '#D97706' : '#1A3A6B';
-    const lockIcon = s.locked ? '🔒 ' : '';
     return `<div class="cal-event ${hidden?'cal-event-hidden':''} ${unfinalized?'cal-event-unfinalized':''}" style="background:${bg}" data-id="${s.id}">
       <span class="cal-event-dot" style="background:${dot}"></span>
-      <span class="cal-event-text">${lockIcon}${escapeHtml(s.course||'—')} · ${escapeHtml(s.type||'')}</span>
+      <span class="cal-event-text">${escapeHtml(s.course||'—')} · ${escapeHtml(s.type||'')}</span>
     </div>`;
   }
 
@@ -368,7 +367,7 @@
 
   function openForm(session, dateStr) {
     const isEdit = !!session;
-    const isLocked = !!session?.locked;
+    const isLocked = !submissionsOpen;
     const readOnly = isLocked && !isAdmin;
     const modal = document.getElementById('modal');
     const day = calcDayName(dateStr);
@@ -382,8 +381,8 @@
         <div class="modal-strip"></div>
         <button class="modal-close" id="modal-close">✕</button>
         <div class="modal-header">
-          <div class="modal-title">${isEdit ? (readOnly ? '🔒 Session Locked' : 'Edit Session') : 'New Session'}</div>
-          <div class="modal-subtitle">${day}, ${new Date(dateStr+'T12:00:00').toLocaleDateString('en-CA',{month:'long',day:'numeric',year:'numeric'})} · Academic Week ${weekNum}${readOnly ? ' · Locked by an admin — view only' : ''}</div>
+          <div class="modal-title">${readOnly ? '🔒 Submissions Closed' : (isEdit ? 'Edit Session' : 'New Session')}</div>
+          <div class="modal-subtitle">${day}, ${new Date(dateStr+'T12:00:00').toLocaleDateString('en-CA',{month:'long',day:'numeric',year:'numeric'})} · Academic Week ${weekNum}${readOnly ? ' · Timetable submissions are currently closed — view only' : ''}</div>
         </div>
         <div class="modal-body">
           <form id="session-form">
@@ -463,7 +462,6 @@
         <div class="modal-footer">
           <div style="display:flex;align-items:center;gap:10px">
             ${isEdit && !readOnly ? `<button class="btn-danger-text" id="delete-btn">Delete session</button>` : ''}
-            ${isEdit && isAdmin ? `<button class="btn-secondary" id="lock-btn" style="padding:6px 12px;font-size:12px;border-radius:6px">${isLocked ? '🔓 Unlock' : '🔒 Lock'}</button>` : ''}
           </div>
           <div style="display:flex;align-items:center;gap:12px">
             <span class="save-status" id="save-status"></span>
@@ -477,9 +475,6 @@
     document.getElementById('modal-close').onclick = closeForm;
     document.getElementById('modal-backdrop').onclick = closeForm;
     document.getElementById('cancel-btn').onclick = closeForm;
-    if (isEdit && isAdmin) {
-      document.getElementById('lock-btn').onclick = () => { toggleLock(session); closeForm(); };
-    }
     if (!readOnly) {
       document.getElementById('save-btn').onclick = () => saveSession(session, dateStr, day);
     }
@@ -617,7 +612,7 @@
   }
 
   async function deleteSession(session) {
-    if (session.locked && !isAdmin) { showToast('This session is locked', true); return; }
+    if (!submissionsOpen && !isAdmin) { showToast('Timetable submissions are currently closed', true); return; }
     if (!confirm('Delete this session? This cannot be undone (history will still record it existed).')) return;
     try {
       await db.collection(SESSIONS_COL).doc(session.id).delete();
@@ -702,12 +697,14 @@
   // ════════════════════════════════════════════════════════════
   const ADMIN_PASSWORD = 'Changes26'; // ← change this to update the admin password
   let isAdmin = sessionStorage.getItem('timetable_admin') === '1';
+  let submissionsOpen = true; // default until Firestore tells us otherwise
 
   function updateAdminUI() {
     const btn = document.getElementById('admin-toggle');
     btn.style.opacity = isAdmin ? '1' : '.35';
     btn.title = isAdmin ? 'Admin mode active (click to exit)' : '⚙';
-    renderCalendar(); // re-render so lock buttons show/hide
+    renderStatusBanner();
+    renderCalendar();
   }
 
   document.getElementById('admin-toggle').addEventListener('click', () => {
@@ -729,13 +726,55 @@
     }
   });
 
-  async function toggleLock(session) {
+  // ── Global Submissions Open/Closed switch ───────────────────
+  // Stored as a single document in Firestore so it's shared live across everyone
+  const SETTINGS_DOC = db.collection('settings').doc('global');
+
+  SETTINGS_DOC.onSnapshot(
+    doc => {
+      submissionsOpen = doc.exists ? (doc.data().submissionsOpen !== false) : true;
+      renderStatusBanner();
+      renderCalendar();
+    },
+    err => console.error('[Settings listener]', err)
+  );
+
+  async function toggleSubmissionsOpen() {
+    if (!isAdmin) return;
     try {
-      await db.collection(SESSIONS_COL).doc(session.id).set({ locked: !session.locked }, { merge: true });
-      showToast(session.locked ? 'Session unlocked' : 'Session locked');
+      await SETTINGS_DOC.set({ submissionsOpen: !submissionsOpen }, { merge: true });
+      showToast(!submissionsOpen ? 'Submissions opened for everyone' : 'Submissions closed for everyone');
     } catch (err) {
-      console.error('[Lock error]', err);
-      showToast('Could not update lock status', true);
+      console.error('[Settings update error]', err);
+      showToast('Could not update submission status', true);
+    }
+  }
+
+  function renderStatusBanner() {
+    const existing = document.getElementById('submission-status-banner');
+    if (existing) existing.remove();
+
+    const banner = document.createElement('div');
+    banner.id = 'submission-status-banner';
+    banner.style.cssText = `
+      display:flex; align-items:center; justify-content:space-between; gap:10px;
+      padding:9px 16px; border-radius:8px; margin-bottom:12px; font-size:12.5px;
+      border:1px solid; ${submissionsOpen
+        ? 'background:#EFF6FF;border-color:#BFDBFE;color:#1E40AF;'
+        : 'background:#FEF2F2;border-color:#FECACA;color:#B91C1C;'}
+    `;
+    banner.innerHTML = `
+      <span>${submissionsOpen
+        ? '🟢 <strong>Submissions are open</strong> — faculty can add or edit sessions.'
+        : '🔒 <strong>Submissions are closed</strong> — the timetable is locked for the term. Contact the admin for last-minute changes.'}</span>
+      ${isAdmin ? `<button id="toggle-submissions-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">${submissionsOpen ? 'Close Submissions' : 'Open Submissions'}</button>` : ''}
+    `;
+
+    const intro = document.querySelector('.page-intro');
+    intro.parentNode.insertBefore(banner, intro);
+
+    if (isAdmin) {
+      document.getElementById('toggle-submissions-btn').addEventListener('click', toggleSubmissionsOpen);
     }
   }
 
@@ -767,6 +806,7 @@
   // Initial render — populate course filter and render calendar while waiting for first snapshot
   populateCourseFilterFromYear('all');
   document.getElementById('admin-toggle').style.opacity = isAdmin ? '1' : '.35';
+  renderStatusBanner();
   renderCalendar();
 
 })();
