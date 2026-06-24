@@ -7,739 +7,143 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
 
-  <!-- Firebase SDK (compat build — works without npm/build tools) -->
+  <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-
-  <style>
-    :root {
-      --bg:           #EEF0F4;
-      --surface:      #FFFFFF;
-      --surface-2:    #F6F7F9;
-      --surface-3:    #ECEEF2;
-      --border:       #DDE1E9;
-      --border-2:     #C8CDD8;
-      --text:         #111827;
-      --text-2:       #374151;
-      --text-3:       #6B7280;
-      --accent:       #1A3A6B;
-      --accent-2:     #14305A;
-      --accent-light: #EAF0FB;
-      --danger:       #B91C1C;
-      --success:      #166534;
-      --shadow:       0 1px 3px rgba(0,0,0,.07), 0 2px 8px rgba(0,0,0,.04);
-      --shadow-lg:    0 8px 28px rgba(0,0,0,.14);
-      --radius:       6px;
-      --radius-lg:    10px;
-      --transition:   160ms cubic-bezier(.4,0,.2,1);
-      --font-head:    'Syne', sans-serif;
-      --font-body:    'Inter', system-ui, sans-serif;
-    }
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    html { font-size: 14px; }
-    body { font-family: var(--font-body); background: var(--bg); color: var(--text);
-           min-height: 100vh; -webkit-font-smoothing: antialiased; }
-    button { cursor: pointer; font-family: inherit; border: none; background: none; }
-    select, input, textarea { font-family: inherit; color: inherit; }
-    ::-webkit-scrollbar { width: 4px; height: 4px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 2px; }
-
-    /* ── Top bar ───────────────────────────────────────────────── */
-    .top-bar {
-      background: var(--surface); border-bottom: 1px solid var(--border);
-      box-shadow: var(--shadow); position: sticky; top: 0; z-index: 60;
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 0 24px; height: 56px;
-    }
-    .brand { display: flex; align-items: center; gap: 10px; }
-    .brand-ucvm {
-      font-family: var(--font-head); font-size: 12px; font-weight: 800;
-      color: var(--accent); letter-spacing: 2.5px; text-transform: uppercase;
-    }
-    .brand-sep { width: 1px; height: 14px; background: var(--border-2); }
-    .brand-title { font-size: 13px; font-weight: 500; color: var(--text-3); }
-    .conn-status {
-      display: flex; align-items: center; gap: 6px; font-size: 11.5px;
-      color: var(--text-3); font-weight: 500;
-    }
-    .conn-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); }
-    .conn-dot.online  { background: var(--success); }
-    .conn-dot.error   { background: var(--danger); }
-
-    /* ── Main layout ───────────────────────────────────────────── */
-    .main-content { max-width: 1100px; margin: 0 auto; padding: 20px 20px 60px; }
-
-    .page-intro {
-      background: var(--surface); border: 1px solid var(--border);
-      border-radius: var(--radius-lg); box-shadow: var(--shadow);
-      padding: 16px 20px; margin-bottom: 16px;
-    }
-    .page-intro h1 { font-family: var(--font-head); font-size: 17px; font-weight: 700; margin-bottom: 4px; }
-    .page-intro p  { font-size: 12.5px; color: var(--text-3); line-height: 1.5; }
-
-    /* ── Calendar toolbar ──────────────────────────────────────── */
-    .cal-toolbar {
-      display: flex; align-items: center; justify-content: space-between;
-      margin-bottom: 12px; gap: 8px; flex-wrap: wrap;
-    }
-    .cal-nav { display: flex; align-items: center; gap: 6px; }
-    .btn-nav {
-      width: 32px; height: 32px; border-radius: var(--radius);
-      background: var(--surface); border: 1px solid var(--border);
-      font-size: 17px; color: var(--text-2); display: flex; align-items: center; justify-content: center;
-      transition: all var(--transition);
-    }
-    .btn-nav:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
-    .cal-label { font-family: var(--font-head); font-size: 16px; font-weight: 700; min-width: 200px; text-align: center; }
-    .btn-today {
-      padding: 5px 13px; font-size: 12px; font-weight: 600;
-      background: var(--surface); border: 1px solid var(--border);
-      border-radius: var(--radius); color: var(--text-2); transition: all var(--transition);
-    }
-    .btn-today:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
-
-    /* ── Week view (primary view for this tool) ───────────────── */
-    .cal-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow); overflow: hidden; }
-    .week-header { display: grid; grid-template-columns: repeat(5,1fr); background: var(--surface-2); border-bottom: 1px solid var(--border); }
-    .week-day-head { padding: 10px 8px; text-align: center; border-right: 1px solid var(--border); cursor: pointer; transition: background var(--transition); }
-    .week-day-head:last-child { border-right: none; }
-    .week-day-head:hover { background: var(--accent-light); }
-    .week-day-head.today { background: var(--accent-light); }
-    .wd-dow  { font-size: 10px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: .5px; }
-    .wd-date { font-size: 16px; font-weight: 700; color: var(--text-2); margin-top: 2px; }
-    .week-body { display: grid; grid-template-columns: repeat(5,1fr); min-height: 360px; }
-    .week-col { border-right: 1px solid var(--border); padding: 8px 6px; display: flex; flex-direction: column; gap: 6px; }
-    .week-col:last-child { border-right: none; }
-    .day-add-btn {
-      display: flex; align-items: center; justify-content: center; gap: 6px;
-      padding: 8px; font-size: 11.5px; font-weight: 600; color: var(--accent);
-      background: var(--accent-light); border: 1px dashed var(--accent);
-      border-radius: var(--radius); transition: all var(--transition); cursor: pointer;
-    }
-    .day-add-btn:hover { background: var(--accent); color: #fff; }
-    .entry-card {
-      padding: 8px 9px; border-radius: var(--radius); border-left: 3px solid var(--accent);
-      background: var(--accent-light); cursor: pointer; transition: all var(--transition);
-    }
-    .entry-card:hover { filter: brightness(.97); }
-    .entry-course { font-size: 10.5px; font-weight: 700; color: var(--accent); }
-    .entry-topic  { font-size: 11.5px; color: var(--text); margin-top: 2px; line-height: 1.3; }
-    .entry-meta   { font-size: 10px; color: var(--text-3); margin-top: 4px; }
-    .entry-unfinalized { border-left-color: #D97706; }
-    .entry-unfinalized .entry-course { color: #B45309; }
-
-    /* ── Modal / Form ──────────────────────────────────────────── */
-    .modal-container { display: none; }
-    .modal-container.open { display: block; position: fixed; inset: 0; z-index: 200; }
-    .modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.45); backdrop-filter: blur(2px); }
-    .modal-box {
-      position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
-      background: var(--surface); border: 1px solid var(--border);
-      border-radius: var(--radius-lg); width: min(560px,94vw); max-height: 90vh;
-      overflow-y: auto; box-shadow: var(--shadow-lg); animation: modalIn .2s ease;
-    }
-    @keyframes modalIn { from{opacity:0;transform:translate(-50%,-47%) scale(.97)} to{opacity:1;transform:translate(-50%,-50%) scale(1)} }
-    .modal-strip { height: 5px; background: var(--accent); border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
-    .modal-close {
-      position: absolute; top: 13px; right: 13px; width: 28px; height: 28px;
-      border-radius: 50%; background: var(--surface-2); border: 1px solid var(--border);
-      font-size: 12px; color: var(--text-2); display: flex; align-items: center;
-      justify-content: center; transition: all var(--transition); z-index: 2;
-    }
-    .modal-close:hover { background: var(--danger); color: #fff; }
-    .modal-header { padding: 20px 24px 12px; }
-    .modal-title { font-family: var(--font-head); font-size: 16px; font-weight: 700; }
-    .modal-sub    { font-size: 11.5px; color: var(--text-3); margin-top: 3px; }
-    .modal-body   { padding: 4px 24px 8px; }
-
-    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    .form-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
-    .form-field.full { grid-column: 1 / -1; }
-    .form-label { font-size: 11px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: .4px; }
-    .form-label .req { color: var(--danger); }
-    .form-input, .form-select, .form-textarea {
-      padding: 8px 10px; font-size: 13px; border: 1px solid var(--border);
-      border-radius: var(--radius); background: var(--surface-2); color: var(--text);
-      transition: border-color var(--transition); width: 100%;
-    }
-    .form-input:focus, .form-select:focus, .form-textarea:focus { outline: none; border-color: var(--accent); background: var(--surface); }
-    .form-textarea { resize: vertical; min-height: 56px; font-family: inherit; }
-    .form-hint { font-size: 10.5px; color: var(--text-3); }
-
-    .modal-footer {
-      padding: 14px 24px; display: flex; gap: 8px; justify-content: space-between;
-      border-top: 1px solid var(--border); align-items: center;
-    }
-    .btn { padding: 8px 18px; font-size: 13px; font-weight: 600; border-radius: var(--radius); transition: all var(--transition); cursor: pointer; }
-    .btn-primary   { background: var(--accent); color: #fff; border: 1px solid var(--accent); }
-    .btn-primary:hover { background: var(--accent-2); }
-    .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
-    .btn-secondary { background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border); }
-    .btn-secondary:hover { background: var(--surface-3); }
-    .btn-danger-text { color: var(--danger); font-size: 12px; font-weight: 600; background: none; border: none; }
-    .btn-danger-text:hover { text-decoration: underline; }
-
-    .save-status { font-size: 11.5px; color: var(--text-3); display: flex; align-items: center; gap: 6px; }
-    .save-status.saving  { color: var(--accent); }
-    .save-status.success { color: var(--success); }
-    .save-status.error   { color: var(--danger); }
-
-    /* ── Toast ─────────────────────────────────────────────────── */
-    .toast {
-      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px);
-      background: var(--text); color: #fff; padding: 11px 20px; border-radius: var(--radius-lg);
-      font-size: 13px; font-weight: 500; box-shadow: var(--shadow-lg); z-index: 300;
-      opacity: 0; transition: all 220ms ease; display: flex; align-items: center; gap: 8px;
-    }
-    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-    .toast.error { background: var(--danger); }
-
-    /* ── Export bar ────────────────────────────────────────────── */
-    .export-bar {
-      display: flex; align-items: center; justify-content: space-between; gap: 10px;
-      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
-      box-shadow: var(--shadow); padding: 12px 16px; margin-top: 16px;
-    }
-    .export-bar-text { font-size: 12px; color: var(--text-3); }
-    .export-bar-text strong { color: var(--text); }
-    .btn-export {
-      padding: 7px 14px; font-size: 12px; font-weight: 600; border-radius: var(--radius);
-      background: var(--accent); color: #fff; transition: all var(--transition);
-    }
-    .btn-export:hover { background: var(--accent-2); }
-
-    /* ── Version history panel ─────────────────────────────────── */
-    .history-toggle { font-size: 11.5px; color: var(--accent); font-weight: 600; cursor: pointer; }
-    .history-toggle:hover { text-decoration: underline; }
-    .history-panel { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); display: none; }
-    .history-panel.open { display: block; }
-    .history-item {
-      display: flex; align-items: center; justify-content: space-between; gap: 8px;
-      padding: 6px 8px; border-radius: var(--radius); font-size: 11px; color: var(--text-3);
-      cursor: pointer; transition: background var(--transition);
-    }
-    .history-item:hover { background: var(--surface-2); }
-    .history-restore { font-size: 10.5px; color: var(--accent); font-weight: 600; }
-
-    /* ── Responsive ────────────────────────────────────────────── */
-    @media (max-width: 900px) {
-      .week-header, .week-body { grid-template-columns: 1fr; }
-      .week-day-head { border-right: none; border-bottom: 1px solid var(--border); }
-      .week-col { border-right: none; border-bottom: 1px solid var(--border); }
-      .form-grid { grid-template-columns: 1fr; }
-    }
-    @media (max-width: 480px) {
-      .brand-sep, .brand-title { display: none; }
-      .main-content { padding: 14px 12px 40px; }
-    }
-  </style>
 </head>
 <body>
 
   <header class="top-bar">
-    <div class="brand">
-      <span class="brand-ucvm">UCVM Timetable</span>
-      <span class="brand-sep"></span>
-      <span class="brand-title">Faculty Schedule Submission</span>
+    <div class="top-bar-left">
+      <div class="app-brand">
+        <span class="app-ucvm">UCVM Timetable</span>
+        <span class="app-brand-sep"></span>
+        <span class="app-title">Faculty Schedule Submission</span>
+      </div>
     </div>
-    <div class="conn-status">
-      <span class="conn-dot" id="conn-dot"></span>
-      <span id="conn-text">Connecting…</span>
+    <div class="top-bar-right">
+      <div class="conn-status">
+        <span class="conn-dot" id="conn-dot"></span>
+        <span id="conn-text">Connecting…</span>
+      </div>
+      <button id="dark-toggle" class="btn-icon" title="Toggle dark mode">🌙</button>
+      <button id="export-btn" class="btn-export-top">⬇ Export Master CSV</button>
     </div>
   </header>
 
+  <!-- ══ FILTER BAR ══════════════════════════════════════════════ -->
+  <div class="filter-bar-wrap">
+    <div class="filter-bar-inner">
+      <div class="filter-row">
+        <div class="fbar-item fbar-search">
+          <span class="fbar-icon">🔍</span>
+          <input type="text" id="search-input" class="fbar-input" placeholder="Search course, topic, instructor…" />
+        </div>
+        <div class="fbar-item">
+          <label class="fbar-label">Year</label>
+          <div class="fbar-select-wrap">
+            <select id="filter-year" class="fbar-select">
+              <option value="all">All Years</option>
+              <option value="1">Year 1</option>
+              <option value="2">Year 2</option>
+              <option value="3">Year 3</option>
+            </select>
+            <span class="fbar-arrow">▾</span>
+          </div>
+        </div>
+        <div class="fbar-item">
+          <label class="fbar-label">Month</label>
+          <div class="fbar-select-wrap">
+            <select id="filter-month" class="fbar-select">
+              <option value="all" selected>All Months</option>
+              <option value="1">January</option><option value="2">February</option>
+              <option value="3">March</option><option value="4">April</option>
+              <option value="5">May</option><option value="6">June</option>
+              <option value="7">July</option><option value="8">August</option>
+              <option value="9">September</option><option value="10">October</option>
+              <option value="11">November</option><option value="12">December</option>
+            </select>
+            <span class="fbar-arrow">▾</span>
+          </div>
+        </div>
+        <div class="fbar-item fbar-course">
+          <label class="fbar-label">Course</label>
+          <div class="fbar-select-wrap">
+            <select id="filter-course" class="fbar-select"></select>
+            <span class="fbar-arrow">▾</span>
+          </div>
+        </div>
+        <div class="fbar-item">
+          <label class="fbar-label">Type</label>
+          <div class="fbar-select-wrap">
+            <select id="filter-type" class="fbar-select">
+              <option value="all">All Types</option>
+              <option value="Lecture">Lecture</option>
+              <option value="Lab">Lab</option>
+              <option value="SRL">SRL</option>
+              <option value="Seminar">Seminar</option>
+              <option value="Exam">Exam</option>
+              <option value="Midterm">Midterm</option>
+              <option value="Quiz">Quiz</option>
+              <option value="Clinical">Clinical</option>
+              <option value="Other">Other</option>
+            </select>
+            <span class="fbar-arrow">▾</span>
+          </div>
+        </div>
+        <button id="reset-filters" class="fbar-reset">↺ Reset</button>
+      </div>
+
+      <div id="active-chips-row" class="active-chips-row hidden">
+        <span class="active-chips-label">Active:</span>
+        <div id="filter-chips" class="filter-bar-chips"></div>
+        <button id="chips-clear" class="chips-clear">Clear all</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ MAIN CONTENT ════════════════════════════════════════════ -->
   <main class="main-content">
 
     <div class="page-intro">
       <h1>Submit your course schedule</h1>
-      <p>Click a day below to add or edit a session. Your submission saves automatically — every change is versioned, so nothing is ever lost.</p>
+      <p>Click any day or the + button to add a session. Click an existing session to edit it. Changes save automatically and are versioned — nothing is ever lost.</p>
     </div>
 
     <div class="cal-toolbar">
       <div class="cal-nav">
-        <button class="btn-nav" id="week-prev">‹</button>
-        <span class="cal-label" id="week-label"></span>
-        <button class="btn-nav" id="week-next">›</button>
-        <button class="btn-today" id="week-today">This Week</button>
+        <button class="btn-cal-nav" id="cal-prev">‹</button>
+        <span class="cal-label-text" id="cal-label"></span>
+        <button class="btn-cal-nav" id="cal-next">›</button>
+        <button class="btn-cal-today" id="cal-today">Today</button>
+      </div>
+      <div class="cal-view-toggle">
+        <button class="cal-view-btn active" id="cal-month-btn">Month</button>
+        <button class="cal-view-btn" id="cal-week-btn">Week</button>
       </div>
     </div>
 
     <div class="cal-card">
-      <div class="week-header" id="week-header"></div>
-      <div class="week-body" id="week-body"></div>
+      <div id="calendar-body"></div>
     </div>
 
     <div class="export-bar">
       <div class="export-bar-text">
         <strong id="total-count">0</strong> sessions submitted so far across all faculty
       </div>
-      <button class="btn-export" id="export-btn">⬇ Export Master List (CSV)</button>
+      <button class="btn-export-top" id="export-btn-2">⬇ Export Master List (CSV)</button>
     </div>
 
   </main>
 
-  <!-- Submission Modal -->
   <div id="modal" class="modal-container"></div>
-
-  <!-- Toast -->
   <div id="toast" class="toast"></div>
 
-  <script>
-  (async function() {
-    'use strict';
-
-    // ════════════════════════════════════════════════════════════
-    // FIREBASE SETUP
-    // ════════════════════════════════════════════════════════════
-    const firebaseConfig = {
-      apiKey: "AIzaSyBqLdbPBn2V8tPSlJ8Q2LEmBKy1o7FtEa0",
-      authDomain: "timetable-23438.firebaseapp.com",
-      projectId: "timetable-23438",
-      storageBucket: "timetable-23438.firebasestorage.app",
-      messagingSenderId: "577386132793",
-      appId: "1:577386132793:web:c59f591e1450fcf88424e8"
-    };
-
-    firebase.initializeApp(firebaseConfig);
-    const db = firebase.firestore();
-    const SESSIONS_COL = 'sessions';   // current state of each session
-    const HISTORY_COL  = 'sessions_history'; // every version ever saved, never deleted
-
-    const connDot  = document.getElementById('conn-dot');
-    const connText = document.getElementById('conn-text');
-
-    // ════════════════════════════════════════════════════════════
-    // STATE
-    // ════════════════════════════════════════════════════════════
-    let weekStart = startOfWeek(new Date());
-    let sessions  = []; // all session docs, live from Firestore
-    let unsubscribe = null;
-
-    function startOfWeek(d) {
-      const date = new Date(d);
-      const dow  = (date.getDay() + 6) % 7; // Mon=0
-      date.setDate(date.getDate() - dow);
-      date.setHours(0,0,0,0);
-      return date;
-    }
-    function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate()+n); return r; }
-    function dateKey(d) { return d.toISOString().slice(0,10); }
-    function isSameDay(a,b) { return dateKey(a) === dateKey(b); }
-
-    // ════════════════════════════════════════════════════════════
-    // FIRESTORE LIVE LISTENER
-    // ════════════════════════════════════════════════════════════
-    function startListening() {
-      connText.textContent = 'Connecting…';
-      connDot.className = 'conn-dot';
-
-      unsubscribe = db.collection(SESSIONS_COL).onSnapshot(
-        snapshot => {
-          sessions = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          connDot.className = 'conn-dot online';
-          connText.textContent = 'Connected';
-          renderWeek();
-          renderTotalCount();
-        },
-        err => {
-          console.error('[Firestore] listener error', err);
-          connDot.className = 'conn-dot error';
-          connText.textContent = 'Connection error';
-          showToast('Could not connect to the database. Check your internet connection.', true);
-        }
-      );
-    }
-    startListening();
-
-    function renderTotalCount() {
-      document.getElementById('total-count').textContent = sessions.length;
-    }
-
-    // ════════════════════════════════════════════════════════════
-    // WEEK CALENDAR RENDER
-    // ════════════════════════════════════════════════════════════
-    const DOW = ['Monday','Tuesday','Wednesday','Thursday','Friday'];
-
-    function renderWeek() {
-      const headerEl = document.getElementById('week-header');
-      const bodyEl    = document.getElementById('week-body');
-      const labelEl   = document.getElementById('week-label');
-
-      const weekEnd = addDays(weekStart, 4);
-      labelEl.textContent = `${weekStart.toLocaleDateString('en-CA',{month:'short',day:'numeric'})} – ${weekEnd.toLocaleDateString('en-CA',{month:'short',day:'numeric',year:'numeric'})}`;
-
-      const today = new Date(); today.setHours(0,0,0,0);
-
-      let headerHTML = '';
-      let bodyHTML   = '';
-
-      for (let i = 0; i < 5; i++) {
-        const day      = addDays(weekStart, i);
-        const isToday  = isSameDay(day, today);
-        const daySessions = sessions
-          .filter(s => s.date === dateKey(day))
-          .sort((a,b) => (a.startTime||'').localeCompare(b.startTime||''));
-
-        headerHTML += `<div class="week-day-head ${isToday?'today':''}" data-date="${dateKey(day)}">
-          <div class="wd-dow">${DOW[i]}</div>
-          <div class="wd-date">${day.getDate()}</div>
-        </div>`;
-
-        bodyHTML += `<div class="week-col" data-date="${dateKey(day)}">`;
-        daySessions.forEach(s => {
-          const unfinalized = !s.finalizedInstructors || s.finalizedInstructors.trim() === '';
-          bodyHTML += `<div class="entry-card ${unfinalized?'entry-unfinalized':''}" data-id="${s.id}">
-            <div class="entry-course">${escapeHtml(s.course||'—')}${s.type?' · '+escapeHtml(s.type):''}</div>
-            <div class="entry-topic">${escapeHtml(s.topic||'No topic yet')}</div>
-            <div class="entry-meta">${s.startTime||'?'}${s.endTime?' – '+s.endTime:''} · ${escapeHtml(s.primaryInstructor||'No instructor yet')}</div>
-          </div>`;
-        });
-        bodyHTML += `<button class="day-add-btn" data-date="${dateKey(day)}">+ Add session</button>`;
-        bodyHTML += `</div>`;
-      }
-
-      headerEl.innerHTML = headerHTML;
-      bodyEl.innerHTML   = bodyHTML;
-
-      // Wire clicks
-      bodyEl.querySelectorAll('.day-add-btn').forEach(btn => {
-        btn.addEventListener('click', () => openForm(null, btn.dataset.date));
-      });
-      bodyEl.querySelectorAll('.entry-card').forEach(card => {
-        card.addEventListener('click', () => {
-          const session = sessions.find(s => s.id === card.dataset.id);
-          if (session) openForm(session, session.date);
-        });
-      });
-      headerEl.querySelectorAll('.week-day-head').forEach(head => {
-        head.addEventListener('click', () => openForm(null, head.dataset.date));
-      });
-    }
-
-    function escapeHtml(str) {
-      const div = document.createElement('div');
-      div.textContent = str;
-      return div.innerHTML;
-    }
-
-    // ════════════════════════════════════════════════════════════
-    // WEEK NAVIGATION
-    // ════════════════════════════════════════════════════════════
-    document.getElementById('week-prev').addEventListener('click', () => { weekStart = addDays(weekStart, -7); renderWeek(); });
-    document.getElementById('week-next').addEventListener('click', () => { weekStart = addDays(weekStart, 7); renderWeek(); });
-    document.getElementById('week-today').addEventListener('click', () => { weekStart = startOfWeek(new Date()); renderWeek(); });
-
-    // ════════════════════════════════════════════════════════════
-    // FORM MODAL
-    // ════════════════════════════════════════════════════════════
-    function calcDay(dateStr) {
-      const d = new Date(dateStr + 'T12:00:00');
-      return d.toLocaleDateString('en-CA', { weekday: 'long' });
-    }
-    function calcWeekNumber(dateStr) {
-      // Simple ISO-ish week number for display purposes
-      const d = new Date(dateStr + 'T12:00:00');
-      const start = new Date(d.getFullYear(), 7, 1); // approx academic year start (Aug 1)
-      const ref = d < start ? new Date(d.getFullYear()-1, 7, 1) : start;
-      const diff = Math.floor((d - ref) / (7*24*60*60*1000)) + 1;
-      return diff;
-    }
-
-    function openForm(session, dateStr) {
-      const isEdit = !!session;
-      const modal = document.getElementById('modal');
-
-      const day = calcDay(dateStr);
-      const weekNum = session?.week || calcWeekNumber(dateStr);
-
-      modal.innerHTML = `
-        <div class="modal-backdrop" id="modal-backdrop"></div>
-        <div class="modal-box">
-          <div class="modal-strip"></div>
-          <button class="modal-close" id="modal-close">✕</button>
-          <div class="modal-header">
-            <div class="modal-title">${isEdit ? 'Edit Session' : 'New Session'}</div>
-            <div class="modal-sub">${day}, ${new Date(dateStr+'T12:00:00').toLocaleDateString('en-CA',{month:'long',day:'numeric',year:'numeric'})}</div>
-          </div>
-          <div class="modal-body">
-            <form id="session-form">
-              <div class="form-grid">
-                <div class="form-field">
-                  <label class="form-label">Week #</label>
-                  <input type="number" class="form-input" id="f-week" value="${weekNum}" />
-                </div>
-                <div class="form-field">
-                  <label class="form-label">Day</label>
-                  <input type="text" class="form-input" value="${day}" disabled />
-                </div>
-                <div class="form-field">
-                  <label class="form-label">Start Time <span class="req">*</span></label>
-                  <input type="time" class="form-input" id="f-start" value="${session?.startTime||''}" required />
-                </div>
-                <div class="form-field">
-                  <label class="form-label">End Time</label>
-                  <input type="time" class="form-input" id="f-end" value="${session?.endTime||''}" />
-                </div>
-                <div class="form-field">
-                  <label class="form-label">Course <span class="req">*</span></label>
-                  <input type="text" class="form-input" id="f-course" placeholder="e.g. 505" value="${escapeHtml(session?.course||'')}" required />
-                </div>
-                <div class="form-field">
-                  <label class="form-label">Type <span class="req">*</span></label>
-                  <select class="form-select" id="f-type" required>
-                    <option value="">Select type…</option>
-                    ${['Lecture','Lab','Seminar','Exam','Midterm','Quiz','Clinical','Other'].map(t =>
-                      `<option value="${t}" ${session?.type===t?'selected':''}>${t}</option>`).join('')}
-                  </select>
-                </div>
-                <div class="form-field full">
-                  <label class="form-label">Topic</label>
-                  <input type="text" class="form-input" id="f-topic" placeholder="What is being covered" value="${escapeHtml(session?.topic||'')}" />
-                </div>
-                <div class="form-field">
-                  <label class="form-label"># of Instructors</label>
-                  <input type="number" class="form-input" id="f-numinstr" min="0" value="${session?.numInstructors||''}" />
-                </div>
-                <div class="form-field">
-                  <label class="form-label">Primary Instructor</label>
-                  <input type="text" class="form-input" id="f-primary" value="${escapeHtml(session?.primaryInstructor||'')}" />
-                </div>
-                <div class="form-field">
-                  <label class="form-label">Secondary Instructor</label>
-                  <input type="text" class="form-input" id="f-secondary" value="${escapeHtml(session?.secondaryInstructor||'')}" />
-                </div>
-                <div class="form-field">
-                  <label class="form-label">Finalized Instructors</label>
-                  <input type="text" class="form-input" id="f-finalized" placeholder="Leave blank if still TBD" value="${escapeHtml(session?.finalizedInstructors||'')}" />
-                  <span class="form-hint">Leave blank until instructor assignment is confirmed</span>
-                </div>
-                <div class="form-field full">
-                  <label class="form-label">Notes</label>
-                  <textarea class="form-textarea" id="f-notes">${escapeHtml(session?.notes||'')}</textarea>
-                </div>
-              </div>
-            </form>
-            ${isEdit ? `
-              <div class="history-toggle" id="history-toggle">View version history</div>
-              <div class="history-panel" id="history-panel"></div>
-            ` : ''}
-          </div>
-          <div class="modal-footer">
-            <div>
-              ${isEdit ? `<button class="btn-danger-text" id="delete-btn">Delete session</button>` : ''}
-            </div>
-            <div style="display:flex;align-items:center;gap:12px">
-              <span class="save-status" id="save-status"></span>
-              <button class="btn btn-secondary" id="cancel-btn">Cancel</button>
-              <button class="btn btn-primary" id="save-btn">${isEdit ? 'Save Changes' : 'Submit'}</button>
-            </div>
-          </div>
-        </div>`;
-
-      modal.classList.add('open');
-
-      document.getElementById('modal-close').onclick = closeForm;
-      document.getElementById('modal-backdrop').onclick = closeForm;
-      document.getElementById('cancel-btn').onclick = closeForm;
-
-      document.getElementById('save-btn').onclick = () => saveSession(session, dateStr, day);
-
-      if (isEdit) {
-        document.getElementById('delete-btn').onclick = () => deleteSession(session);
-        document.getElementById('history-toggle').onclick = () => loadHistory(session.id);
-      }
-    }
-
-    function closeForm() {
-      const modal = document.getElementById('modal');
-      modal.classList.remove('open');
-      modal.innerHTML = '';
-    }
-
-    // ════════════════════════════════════════════════════════════
-    // SAVE — writes to current state + appends to history
-    // ════════════════════════════════════════════════════════════
-    async function saveSession(existing, dateStr, day) {
-      const statusEl = document.getElementById('save-status');
-      const saveBtn  = document.getElementById('save-btn');
-
-      const course = document.getElementById('f-course').value.trim();
-      const type   = document.getElementById('f-type').value;
-      const start  = document.getElementById('f-start').value;
-
-      if (!course || !type || !start) {
-        statusEl.className = 'save-status error';
-        statusEl.textContent = 'Please fill required fields';
-        return;
-      }
-
-      const data = {
-        week:                  parseInt(document.getElementById('f-week').value) || null,
-        date:                  dateStr,
-        day:                   day,
-        startTime:             start,
-        endTime:               document.getElementById('f-end').value || '',
-        course:                course,
-        type:                  type,
-        topic:                 document.getElementById('f-topic').value.trim(),
-        numInstructors:        parseInt(document.getElementById('f-numinstr').value) || null,
-        primaryInstructor:     document.getElementById('f-primary').value.trim(),
-        secondaryInstructor:   document.getElementById('f-secondary').value.trim(),
-        finalizedInstructors:  document.getElementById('f-finalized').value.trim(),
-        notes:                 document.getElementById('f-notes').value.trim(),
-        updatedAt:             firebase.firestore.FieldValue.serverTimestamp(),
-      };
-
-      saveBtn.disabled = true;
-      statusEl.className = 'save-status saving';
-      statusEl.textContent = 'Saving…';
-
-      try {
-        let docId = existing?.id;
-
-        if (docId) {
-          await db.collection(SESSIONS_COL).doc(docId).set(data, { merge: true });
-        } else {
-          const ref = await db.collection(SESSIONS_COL).add({
-            ...data,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-          });
-          docId = ref.id;
-        }
-
-        // Append a version snapshot to history — never overwritten, never deleted
-        await db.collection(HISTORY_COL).add({
-          sessionId: docId,
-          ...data,
-          savedAt: firebase.firestore.FieldValue.serverTimestamp(),
-        });
-
-        statusEl.className = 'save-status success';
-        statusEl.textContent = 'Saved ✓';
-        showToast(existing ? 'Session updated' : 'Session submitted');
-        setTimeout(closeForm, 500);
-
-      } catch (err) {
-        console.error('[Save error]', err);
-        statusEl.className = 'save-status error';
-        statusEl.textContent = 'Failed to save — try again';
-        saveBtn.disabled = false;
-      }
-    }
-
-    // ════════════════════════════════════════════════════════════
-    // DELETE
-    // ════════════════════════════════════════════════════════════
-    async function deleteSession(session) {
-      if (!confirm('Delete this session? This cannot be undone (though the version history will still record it existed).')) return;
-      try {
-        await db.collection(SESSIONS_COL).doc(session.id).delete();
-        showToast('Session deleted');
-        closeForm();
-      } catch (err) {
-        console.error('[Delete error]', err);
-        showToast('Could not delete — try again', true);
-      }
-    }
-
-    // ════════════════════════════════════════════════════════════
-    // VERSION HISTORY
-    // ════════════════════════════════════════════════════════════
-    async function loadHistory(sessionId) {
-      const panel = document.getElementById('history-panel');
-      const toggle = document.getElementById('history-toggle');
-      const isOpen = panel.classList.contains('open');
-
-      if (isOpen) { panel.classList.remove('open'); return; }
-
-      panel.innerHTML = '<div style="font-size:11px;color:var(--text-3)">Loading…</div>';
-      panel.classList.add('open');
-
-      try {
-        const snap = await db.collection(HISTORY_COL)
-          .where('sessionId', '==', sessionId)
-          .orderBy('savedAt', 'desc')
-          .limit(20)
-          .get();
-
-        if (snap.empty) {
-          panel.innerHTML = '<div style="font-size:11px;color:var(--text-3)">No history yet</div>';
-          return;
-        }
-
-        panel.innerHTML = snap.docs.map(doc => {
-          const v = doc.data();
-          const when = v.savedAt?.toDate ? v.savedAt.toDate().toLocaleString('en-CA',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
-          return `<div class="history-item" data-vid="${doc.id}">
-            <span>${when} — ${escapeHtml(v.primaryInstructor||'no instructor')} · ${escapeHtml(v.topic||'no topic')}</span>
-            <span class="history-restore">Restore</span>
-          </div>`;
-        }).join('');
-
-        panel.querySelectorAll('.history-item').forEach(item => {
-          item.addEventListener('click', async () => {
-            const vDoc = await db.collection(HISTORY_COL).doc(item.dataset.vid).get();
-            const v = vDoc.data();
-            if (!v) return;
-            if (!confirm('Restore this version? This will overwrite the current session data.')) return;
-            const { sessionId: sid, savedAt, ...patch } = v;
-            await db.collection(SESSIONS_COL).doc(sid).set(patch, { merge: true });
-            showToast('Version restored');
-            closeForm();
-          });
-        });
-      } catch (err) {
-        console.error('[History error]', err);
-        panel.innerHTML = '<div style="font-size:11px;color:var(--danger)">Could not load history</div>';
-      }
-    }
-
-    // ════════════════════════════════════════════════════════════
-    // EXPORT MASTER CSV
-    // ════════════════════════════════════════════════════════════
-    document.getElementById('export-btn').addEventListener('click', () => {
-      if (!sessions.length) { showToast('No sessions to export yet', true); return; }
-
-      const headers = ['Week','Date','Day','Start Time','End Time','Course','Type','Topic','# of Instructors','Primary Instructor','Secondary Instructor','Finalized Instructors','Notes'];
-      const rows = sessions
-        .sort((a,b) => (a.date||'').localeCompare(b.date||'') || (a.startTime||'').localeCompare(b.startTime||''))
-        .map(s => [
-          s.week||'', s.date||'', s.day||'', s.startTime||'', s.endTime||'',
-          `"${(s.course||'').replace(/"/g,'""')}"`,
-          s.type||'',
-          `"${(s.topic||'').replace(/"/g,'""')}"`,
-          s.numInstructors||'',
-          `"${(s.primaryInstructor||'').replace(/"/g,'""')}"`,
-          `"${(s.secondaryInstructor||'').replace(/"/g,'""')}"`,
-          `"${(s.finalizedInstructors||'').replace(/"/g,'""')}"`,
-          `"${(s.notes||'').replace(/"/g,'""')}"`,
-        ]);
-
-      const csv  = [headers, ...rows].map(r => r.join(',')).join('\n');
-      const blob = new Blob([csv], { type: 'text/csv' });
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement('a');
-      a.href = url; a.download = `ucvm_faculty_schedule_master_${dateKey(new Date())}.csv`; a.click();
-      URL.revokeObjectURL(url);
-      showToast('Master list exported');
-    });
-
-    // ════════════════════════════════════════════════════════════
-    // TOAST
-    // ════════════════════════════════════════════════════════════
-    function showToast(msg, isError) {
-      const t = document.getElementById('toast');
-      t.textContent = msg;
-      t.className = 'toast show' + (isError ? ' error' : '');
-      setTimeout(() => { t.className = 'toast' + (isError ? ' error' : ''); }, 2600);
-    }
-
-    // Initial render while waiting for first snapshot
-    renderWeek();
-
-  })();
-  </script>
+  <!-- Scripts -->
+  <script src="courseData.js"></script>
+  <script src="calendarEngine.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
