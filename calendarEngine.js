@@ -78,6 +78,17 @@ const CalendarEngine = (() => {
     return new Date(dateStr + 'T12:00:00').toLocaleDateString('en-CA', { weekday: 'long' });
   }
 
+  // ── Date Range for the academic week (Mon-Fri) containing this date ──
+  // Example: "Jun 19 - Jun 23"
+  function calcDateRange(dateStr) {
+    const d = new Date(dateStr + 'T12:00:00');
+    const dow = (d.getDay() + 6) % 7; // Mon=0
+    const monday = new Date(d); monday.setDate(d.getDate() - dow);
+    const friday = new Date(monday); friday.setDate(monday.getDate() + 4);
+    const fmt = dt => dt.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' });
+    return `${fmt(monday)} - ${fmt(friday)}`;
+  }
+
   function monthLabel(date) {
     return date.toLocaleDateString('en-CA', { month: 'long', year: 'numeric' });
   }
@@ -88,7 +99,7 @@ const CalendarEngine = (() => {
   return {
     DOW7, dateKey, addDays, isToday,
     buildMonthGrid, buildWeekDays,
-    calcAcademicWeekNumber, getAcademicCycleLabel, calcDayName,
+    calcAcademicWeekNumber, getAcademicCycleLabel, calcDayName, calcDateRange,
     monthLabel, weekLabel,
   };
 })();
