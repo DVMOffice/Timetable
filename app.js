@@ -460,6 +460,46 @@
     modal.classList.remove('open'); modal.innerHTML = '';
   }
 
+  const CHANGELOG_COL = 'change_log';
+
+  // Human-readable labels for the changelog
+  const FIELD_LABELS = {
+    week: 'Week', dateRange: 'Date Range', academicCycle: 'Academic Cycle',
+    date: 'Date', day: 'Day', year: 'Year', startTime: 'Start Time', endTime: 'End Time',
+    course: 'Course', courseName: 'Course Name', courseDept: 'Department',
+    type: 'Type', topic: 'Topic', numInstructors: '# of Instructors',
+    instructorProposed: 'Instructor Proposed', primaryInstructor: 'Primary Instructor',
+    secondaryInstructor: 'Secondary Instructor', finalizedInstructors: 'Finalized Instructors',
+    notes: 'Notes',
+  };
+
+  function detectChanges(oldData, newData) {
+    const changes = [];
+    Object.keys(FIELD_LABELS).forEach(key => {
+      const oldVal = oldData?.[key] ?? '';
+      const newVal = newData?.[key] ?? '';
+      if (String(oldVal) !== String(newVal)) {
+        changes.push({ field: key, fieldLabel: FIELD_LABELS[key], oldValue: String(oldVal), newValue: String(newVal) });
+      }
+    });
+    return changes;
+  }
+
+  async function logChanges(sessionId, courseLabel, changes) {
+    if (!changes.length) return;
+    const batch = changes.map(c =>
+      db.collection(CHANGELOG_COL).add({
+        sessionId,
+        course: courseLabel,
+        fieldChanged: c.fieldLabel,
+        oldValue: c.oldValue,
+        newValue: c.newValue,
+        changedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      })
+    );
+    await Promise.all(batch);
+  }
+
   async function saveSession(existing, dateStr, day) {
     const statusEl = document.getElementById('save-status');
     const saveBtn = document.getElementById('save-btn');
@@ -509,6 +549,11 @@
         docId = ref.id;
       }
       await db.collection(HISTORY_COL).add({ sessionId: docId, ...data, savedAt: firebase.firestore.FieldValue.serverTimestamp() });
+
+      // Detect what changed and log it in a clean, readable changelog
+      const courseLabel = `${data.course} - ${data.courseName || ''}`;
+      const changes = existing ? detectChanges(existing, data) : detectChanges({}, data);
+      await logChanges(docId, courseLabel, changes);
 
       statusEl.className = 'save-status success'; statusEl.textContent = 'Saved ✓';
       showToast(existing ? 'Session updated' : 'Session submitted');
