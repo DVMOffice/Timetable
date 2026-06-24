@@ -56,6 +56,41 @@
     }
   );
 
+  // ── Latest Updates feed (from change_log) ──────────────────
+  db.collection(CHANGELOG_COL).orderBy('changedAt', 'desc').limit(15).onSnapshot(
+    snap => {
+      const updates = snap.docs.map(d => d.data());
+      renderLatestUpdates(updates);
+    },
+    err => console.error('[Changelog listener]', err)
+  );
+
+  function renderLatestUpdates(updates) {
+    const el = document.getElementById('latest-updates-body');
+    if (!el) return;
+    if (!updates.length) {
+      el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-3);font-size:12px">No updates yet</div>`;
+      return;
+    }
+    el.innerHTML = updates.map(u => {
+      const when = u.changedAt?.toDate ? u.changedAt.toDate() : null;
+      const whenStr = when ? when.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }) + ' at ' + when.toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit' }) : '—';
+      const yearMatch = (u.course || '').match(/^(\d+)/);
+      const courseCode = yearMatch ? yearMatch[1] : '';
+      const year = CourseData.getYearForCourse(courseCode);
+      const yearLabel = year ? `Year ${year}` : '';
+      return `<div style="padding:10px 16px;border-bottom:1px solid var(--border);font-size:12.5px;display:flex;align-items:baseline;gap:10px">
+        <span style="color:var(--text-3);white-space:nowrap;font-size:11px">${whenStr}</span>
+        <span>
+          ${yearLabel ? `<strong>${yearLabel}</strong>, ` : ''}<strong>${escapeHtml(u.course||'')}</strong> —
+          new <strong>${escapeHtml(u.fieldChanged||'')}</strong>:
+          ${u.oldValue ? `<span style="color:var(--text-3);text-decoration:line-through">${escapeHtml(u.oldValue)}</span> → ` : ''}
+          <span style="color:var(--accent);font-weight:600">${escapeHtml(u.newValue||'(removed)')}</span>
+        </span>
+      </div>`;
+    }).join('');
+  }
+
   // ════════════════════════════════════════════════════════════
   // FILTERING
   // ════════════════════════════════════════════════════════════
@@ -177,9 +212,10 @@
     const unfinalized = !s.finalizedInstructors || s.finalizedInstructors.trim()==='';
     const bg = unfinalized ? '#FFFBEB' : '#EAF0FB';
     const dot = unfinalized ? '#D97706' : '#1A3A6B';
+    const lockIcon = s.locked ? '🔒 ' : '';
     return `<div class="cal-event ${hidden?'cal-event-hidden':''} ${unfinalized?'cal-event-unfinalized':''}" style="background:${bg}" data-id="${s.id}">
       <span class="cal-event-dot" style="background:${dot}"></span>
-      <span class="cal-event-text">${escapeHtml(s.course||'—')} · ${escapeHtml(s.type||'')}</span>
+      <span class="cal-event-text">${lockIcon}${escapeHtml(s.course||'—')} · ${escapeHtml(s.type||'')}</span>
     </div>`;
   }
 
@@ -332,10 +368,13 @@
 
   function openForm(session, dateStr) {
     const isEdit = !!session;
+    const isLocked = !!session?.locked;
+    const readOnly = isLocked && !isAdmin;
     const modal = document.getElementById('modal');
     const day = calcDayName(dateStr);
     const weekNum = session?.week || calcAcademicWeekNumber(dateStr);
     const sessionYear = session?.year || '';
+    const disabledAttr = readOnly ? 'disabled' : '';
 
     modal.innerHTML = `
       <div class="modal-backdrop" id="modal-backdrop"></div>
@@ -343,11 +382,12 @@
         <div class="modal-strip"></div>
         <button class="modal-close" id="modal-close">✕</button>
         <div class="modal-header">
-          <div class="modal-title">${isEdit ? 'Edit Session' : 'New Session'}</div>
-          <div class="modal-subtitle">${day}, ${new Date(dateStr+'T12:00:00').toLocaleDateString('en-CA',{month:'long',day:'numeric',year:'numeric'})} · Academic Week ${weekNum}</div>
+          <div class="modal-title">${isEdit ? (readOnly ? '🔒 Session Locked' : 'Edit Session') : 'New Session'}</div>
+          <div class="modal-subtitle">${day}, ${new Date(dateStr+'T12:00:00').toLocaleDateString('en-CA',{month:'long',day:'numeric',year:'numeric'})} · Academic Week ${weekNum}${readOnly ? ' · Locked by an admin — view only' : ''}</div>
         </div>
         <div class="modal-body">
           <form id="session-form">
+            <fieldset ${disabledAttr} style="border:none;padding:0;margin:0">
             <div class="form-grid">
               <div class="form-field">
                 <label class="form-label">Week # <span class="form-hint" style="text-transform:none;font-weight:400">(auto)</span></label>
@@ -416,15 +456,19 @@
                 <textarea class="form-textarea" id="f-notes">${escapeHtml(session?.notes||'')}</textarea>
               </div>
             </div>
+            </fieldset>
           </form>
           ${isEdit ? `<div class="history-toggle" id="history-toggle">View version history</div><div class="history-panel" id="history-panel"></div>` : ''}
         </div>
         <div class="modal-footer">
-          <div>${isEdit ? `<button class="btn-danger-text" id="delete-btn">Delete session</button>` : ''}</div>
+          <div style="display:flex;align-items:center;gap:10px">
+            ${isEdit && !readOnly ? `<button class="btn-danger-text" id="delete-btn">Delete session</button>` : ''}
+            ${isEdit && isAdmin ? `<button class="btn-secondary" id="lock-btn" style="padding:6px 12px;font-size:12px;border-radius:6px">${isLocked ? '🔓 Unlock' : '🔒 Lock'}</button>` : ''}
+          </div>
           <div style="display:flex;align-items:center;gap:12px">
             <span class="save-status" id="save-status"></span>
-            <button class="btn btn-secondary" id="cancel-btn">Cancel</button>
-            <button class="btn btn-primary" id="save-btn">${isEdit ? 'Save Changes' : 'Submit'}</button>
+            <button class="btn btn-secondary" id="cancel-btn">${readOnly ? 'Close' : 'Cancel'}</button>
+            ${readOnly ? '' : `<button class="btn btn-primary" id="save-btn">${isEdit ? 'Save Changes' : 'Submit'}</button>`}
           </div>
         </div>
       </div>`;
@@ -433,26 +477,33 @@
     document.getElementById('modal-close').onclick = closeForm;
     document.getElementById('modal-backdrop').onclick = closeForm;
     document.getElementById('cancel-btn').onclick = closeForm;
-    document.getElementById('save-btn').onclick = () => saveSession(session, dateStr, day);
+    if (isEdit && isAdmin) {
+      document.getElementById('lock-btn').onclick = () => { toggleLock(session); closeForm(); };
+    }
+    if (!readOnly) {
+      document.getElementById('save-btn').onclick = () => saveSession(session, dateStr, day);
+    }
     if (isEdit) {
-      document.getElementById('delete-btn').onclick = () => deleteSession(session);
+      if (!readOnly) document.getElementById('delete-btn').onclick = () => deleteSession(session);
       document.getElementById('history-toggle').onclick = () => loadHistory(session.id);
     }
 
-    document.getElementById('f-year').addEventListener('change', e => {
-      const year = e.target.value;
-      const courseSel = document.getElementById('f-course');
-      const hint = document.getElementById('course-hint');
-      if (!year) {
-        courseSel.innerHTML = `<option value="">Select Year first…</option>`;
-        courseSel.disabled = true;
-        hint.textContent = 'Select a Year above to see its courses';
-      } else {
-        courseSel.innerHTML = buildCourseOptionsHtml(year, null);
-        courseSel.disabled = false;
-        hint.textContent = '';
-      }
-    });
+    if (!readOnly) {
+      document.getElementById('f-year').addEventListener('change', e => {
+        const year = e.target.value;
+        const courseSel = document.getElementById('f-course');
+        const hint = document.getElementById('course-hint');
+        if (!year) {
+          courseSel.innerHTML = `<option value="">Select Year first…</option>`;
+          courseSel.disabled = true;
+          hint.textContent = 'Select a Year above to see its courses';
+        } else {
+          courseSel.innerHTML = buildCourseOptionsHtml(year, null);
+          courseSel.disabled = false;
+          hint.textContent = '';
+        }
+      });
+    }
   }
 
   function closeForm() {
@@ -566,6 +617,7 @@
   }
 
   async function deleteSession(session) {
+    if (session.locked && !isAdmin) { showToast('This session is locked', true); return; }
     if (!confirm('Delete this session? This cannot be undone (history will still record it existed).')) return;
     try {
       await db.collection(SESSIONS_COL).doc(session.id).delete();
@@ -646,6 +698,48 @@
   document.getElementById('export-btn-2').addEventListener('click', exportCSV);
 
   // ════════════════════════════════════════════════════════════
+  // ADMIN MODE
+  // ════════════════════════════════════════════════════════════
+  const ADMIN_PASSWORD = 'Changes26'; // ← change this to update the admin password
+  let isAdmin = sessionStorage.getItem('timetable_admin') === '1';
+
+  function updateAdminUI() {
+    const btn = document.getElementById('admin-toggle');
+    btn.style.opacity = isAdmin ? '1' : '.35';
+    btn.title = isAdmin ? 'Admin mode active (click to exit)' : '⚙';
+    renderCalendar(); // re-render so lock buttons show/hide
+  }
+
+  document.getElementById('admin-toggle').addEventListener('click', () => {
+    if (isAdmin) {
+      isAdmin = false;
+      sessionStorage.removeItem('timetable_admin');
+      showToast('Admin mode off');
+      updateAdminUI();
+      return;
+    }
+    const entered = prompt('Enter admin password:');
+    if (entered === ADMIN_PASSWORD) {
+      isAdmin = true;
+      sessionStorage.setItem('timetable_admin', '1');
+      showToast('Admin mode on');
+      updateAdminUI();
+    } else if (entered !== null) {
+      showToast('Incorrect password', true);
+    }
+  });
+
+  async function toggleLock(session) {
+    try {
+      await db.collection(SESSIONS_COL).doc(session.id).set({ locked: !session.locked }, { merge: true });
+      showToast(session.locked ? 'Session unlocked' : 'Session locked');
+    } catch (err) {
+      console.error('[Lock error]', err);
+      showToast('Could not update lock status', true);
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════
   // DARK MODE
   // ════════════════════════════════════════════════════════════
   let darkMode = JSON.parse(localStorage.getItem('timetable_dark') || 'false');
@@ -672,6 +766,7 @@
 
   // Initial render — populate course filter and render calendar while waiting for first snapshot
   populateCourseFilterFromYear('all');
+  document.getElementById('admin-toggle').style.opacity = isAdmin ? '1' : '.35';
   renderCalendar();
 
 })();
