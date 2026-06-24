@@ -31,7 +31,7 @@
   let filters = { search: '', year: 'all', month: 'all', week: 'all', course: 'all', type: 'all' };
 
   const { DOW7, dateKey, addDays, isToday, buildMonthGrid, buildWeekDays,
-          calcAcademicWeekNumber, getAcademicCycleLabel, calcDayName,
+          calcAcademicWeekNumber, getAcademicCycleLabel, calcDayName, calcDateRange,
           monthLabel, weekLabel } = CalendarEngine;
 
   function escapeHtml(str) {
@@ -479,6 +479,7 @@
       week: parseInt(document.getElementById('f-week').value) || null,
       year: year,
       date: dateStr, day: day,
+      dateRange: calcDateRange(dateStr),
       academicCycle: getAcademicCycleLabel(dateStr),
       startTime: start,
       endTime: document.getElementById('f-end').value || '',
@@ -573,11 +574,11 @@
   // ════════════════════════════════════════════════════════════
   function exportCSV() {
     if (!allSessions.length) { showToast('No sessions to export yet', true); return; }
-    const headers = ['Week','Academic Cycle','Date','Day','Year','Start Time','End Time','Course','Course Name','Type','Topic','# of Instructors','Instructor Proposed','Primary Instructor','Secondary Instructor','Finalized Instructors','Notes'];
+    const headers = ['Week','Date Range','Academic Cycle','Date','Day','Year','Start Time','End Time','Course','Course Name','Type','Topic','# of Instructors','Instructor Proposed','Primary Instructor','Secondary Instructor','Finalized Instructors','Notes'];
     const rows = allSessions
       .sort((a,b) => (a.date||'').localeCompare(b.date||'') || (a.startTime||'').localeCompare(b.startTime||''))
       .map(s => [
-        s.week||'', s.academicCycle||'', s.date||'', s.day||'', s.year||'', s.startTime||'', s.endTime||'',
+        s.week||'', s.dateRange||'', s.academicCycle||'', s.date||'', s.day||'', s.year||'', s.startTime||'', s.endTime||'',
         `"${(s.course||'').replace(/"/g,'""')}"`,
         `"${(s.courseName||'').replace(/"/g,'""')}"`,
         s.type||'',
