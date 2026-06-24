@@ -28,7 +28,7 @@
   let calView     = 'month';
   let calDate     = new Date();
   let allSessions = [];
-  let filters = { search: '', year: 'all', month: 'all', course: 'all', type: 'all' };
+  let filters = { search: '', year: 'all', month: 'all', week: 'all', course: 'all', type: 'all' };
 
   const { DOW7, dateKey, addDays, isToday, buildMonthGrid, buildWeekDays,
           calcAcademicWeekNumber, getAcademicCycleLabel, calcDayName,
@@ -63,6 +63,7 @@
     let data = [...allSessions];
     if (filters.year   !== 'all') data = data.filter(s => String(s.year) === String(filters.year));
     if (filters.month  !== 'all') data = data.filter(s => s.date && (new Date(s.date+'T12:00:00').getMonth()+1) === parseInt(filters.month));
+    if (filters.week   !== 'all') data = data.filter(s => String(s.week) === String(filters.week));
     if (filters.course !== 'all') data = data.filter(s => String(s.course) === String(filters.course));
     if (filters.type   !== 'all') data = data.filter(s => s.type === filters.type);
     if (filters.search) {
@@ -83,9 +84,19 @@
     renderTotalCount();
     renderChips();
     populateCourseFilterFromYear(filters.year);
+    populateWeekFilter();
   }
   function renderTotalCount() {
     document.getElementById('total-count').textContent = allSessions.length;
+  }
+
+  function populateWeekFilter() {
+    const sel = document.getElementById('filter-week');
+    const current = sel.value;
+    const weeks = [...new Set(allSessions.map(s => s.week).filter(w => w != null))].sort((a,b) => a-b);
+    sel.innerHTML = '<option value="all">All Weeks</option>' +
+      weeks.map(w => `<option value="${w}">Week ${w}</option>`).join('');
+    if ([...sel.options].some(o => o.value === current)) sel.value = current;
   }
 
   // ── Filter bar: Course dropdown depends on selected Year ───
@@ -265,13 +276,14 @@
     renderAll();
   });
   document.getElementById('filter-month').addEventListener('change', e => { filters.month = e.target.value; renderAll(); });
+  document.getElementById('filter-week').addEventListener('change', e => { filters.week = e.target.value; renderCalendar(); renderChips(); });
   document.getElementById('filter-course').addEventListener('change', e => { filters.course = e.target.value; renderCalendar(); renderChips(); });
   document.getElementById('filter-type').addEventListener('change', e => { filters.type = e.target.value; renderAll(); });
 
   function resetFilters() {
-    filters = { search:'', year:'all', month:'all', course:'all', type:'all' };
+    filters = { search:'', year:'all', month:'all', week:'all', course:'all', type:'all' };
     document.getElementById('search-input').value = '';
-    ['filter-year','filter-month','filter-type'].forEach(id => document.getElementById(id).value='all');
+    ['filter-year','filter-month','filter-week','filter-type'].forEach(id => document.getElementById(id).value='all');
     renderAll();
   }
   document.getElementById('reset-filters').addEventListener('click', resetFilters);
@@ -281,6 +293,7 @@
   function renderChips() {
     const active = [];
     if (filters.year   !== 'all') active.push({k:'year',  l:`Year ${filters.year}`});
+    if (filters.week   !== 'all') active.push({k:'week',  l:`Week ${filters.week}`});
     if (filters.month  !== 'all') active.push({k:'month', l:`Month: ${MONTH_NAMES[parseInt(filters.month)]}`});
     if (filters.course !== 'all') {
       const c = CourseData.findCourse(filters.course);
@@ -368,7 +381,7 @@
                 <label class="form-label">Type <span class="req">*</span></label>
                 <select class="form-select" id="f-type" required>
                   <option value="">Select type…</option>
-                  ${['Lecture','Lab','SRL','Seminar','Exam','Midterm','Quiz','Clinical','Other'].map(t =>
+                  ${['Lecture','Lab','SRL'].map(t =>
                     `<option value="${t}" ${session?.type===t?'selected':''}>${t}</option>`).join('')}
                 </select>
               </div>
