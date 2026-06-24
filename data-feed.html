@@ -8,6 +8,10 @@
   1. This page loads, connects to Firebase, reads the live "sessions" data
   2. It outputs that data as raw JSON text (nothing else — no styling, no menu)
   3. Power Query parses that JSON into an Excel table automatically
+
+  Connect once in Excel:
+  Data > Get Data > From Web > paste this page's URL > Load
+  Then "Refresh" anytime to pull the latest submissions.
 -->
 <html>
 <head><meta charset="UTF-8" /></head>
@@ -34,19 +38,24 @@
     const rows = snap.docs.map(doc => {
       const d = doc.data();
       return {
-        Week:                 d.week ?? '',
-        Date:                 d.date ?? '',
-        Day:                  d.day ?? '',
-        "Start Time":         d.startTime ?? '',
-        "End Time":           d.endTime ?? '',
-        Course:               d.course ?? '',
-        Type:                 d.type ?? '',
-        Topic:                d.topic ?? '',
-        "# of Instructors":   d.numInstructors ?? '',
-        "Primary Instructor": d.primaryInstructor ?? '',
+        Week:                   d.week ?? '',
+        "Academic Cycle":       d.academicCycle ?? '',
+        Date:                   d.date ?? '',
+        Day:                    d.day ?? '',
+        Year:                   d.year ?? '',
+        "Start Time":           d.startTime ?? '',
+        "End Time":             d.endTime ?? '',
+        Course:                 d.course ?? '',
+        "Course Name":          d.courseName ?? '',
+        Department:             d.courseDept ?? '',
+        Type:                   d.type ?? '',
+        Topic:                  d.topic ?? '',
+        "# of Instructors":     d.numInstructors ?? '',
+        "Instructor Proposed":  d.instructorProposed ?? '',
+        "Primary Instructor":   d.primaryInstructor ?? '',
         "Secondary Instructor": d.secondaryInstructor ?? '',
         "Finalized Instructors": d.finalizedInstructors ?? '',
-        Notes:                d.notes ?? ''
+        Notes:                  d.notes ?? ''
       };
     });
     // Sort by date then start time for a sensible default order
