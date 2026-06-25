@@ -29,6 +29,17 @@
   let calView     = 'month';
   let calDate     = new Date();
   let allSessions = [];
+
+  // ── Fixed time slots for the Week grid view ─────────────────
+  // Edit this array to change the standard daily schedule blocks.
+  // type: 'class' = a normal teaching slot, 'lunch' = a labeled break row (no sessions assigned to it)
+  const TIME_SLOTS = [
+    { start: '08:30', end: '10:00', label: '8:30-10:00',  type: 'class' },
+    { start: '10:15', end: '11:45', label: '10:15-11:45', type: 'class' },
+    { start: '11:45', end: '13:00', label: 'Lunch',       type: 'lunch' },
+    { start: '13:00', end: '14:30', label: '1:00-2:30',   type: 'class' },
+    { start: '14:45', end: '16:15', label: '2:45-4:15',   type: 'class' },
+  ];
   let filters = { search: '', year: 'all', month: 'all', week: 'all', course: 'all', type: 'all' };
 
   const { DOW7, dateKey, addDays, isToday, buildMonthGrid, buildWeekDays,
@@ -80,14 +91,16 @@
       const courseCode = yearMatch ? yearMatch[1] : '';
       const year = CourseData.getYearForCourse(courseCode);
       const yearLabel = year ? `Year ${year}` : '';
-      return `<div style="padding:10px 16px;border-bottom:1px solid var(--border);font-size:12.5px;display:flex;align-items:baseline;gap:10px">
-        <span style="color:var(--text-3);white-space:nowrap;font-size:11px">${whenStr}</span>
-        <span>
+      return `<div style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px">
+        <div style="color:var(--text-3);font-size:10.5px;margin-bottom:3px">${whenStr}</div>
+        <div style="line-height:1.4">
           ${yearLabel ? `<strong>${yearLabel}</strong>, ` : ''}<strong>${escapeHtml(u.course||'')}</strong> —
-          new <strong>${escapeHtml(u.fieldChanged||'')}</strong>:
+          new <strong>${escapeHtml(u.fieldChanged||'')}</strong>
+        </div>
+        <div style="margin-top:3px;line-height:1.4">
           ${u.oldValue ? `<span style="color:var(--text-3);text-decoration:line-through">${escapeHtml(u.oldValue)}</span> → ` : ''}
           <span style="color:var(--accent);font-weight:600">${escapeHtml(u.newValue||'(removed)')}</span>
-        </span>
+        </div>
       </div>`;
     }).join('');
   }
@@ -220,37 +233,66 @@
   }
 
   function renderWeekView(container, days, data) {
-    let html = `<div class="cal-week"><div class="cal-week-header">`;
-    days.forEach((d,i) => {
+    // Only Mon-Fri for the fixed grid (matches the reference timetable layout)
+    const weekdays = days.slice(0, 5);
+
+    let html = `<div class="cal-week"><div class="cal-week-grid">`;
+
+    // Header row: corner cell + 5 day headers
+    html += `<div class="cwg-corner">Time</div>`;
+    weekdays.forEach((d, i) => {
       const isTd = isToday(d);
-      html += `<div class="cal-week-day-head ${isTd?'today-head':''}" data-date="${dateKey(d)}">
+      html += `<div class="cwg-day-head ${isTd?'today-head':''}" data-date="${dateKey(d)}">
         <div class="week-dow">${DOW7[i]}</div>
         <div class="week-date">${d.getDate()}</div>
       </div>`;
     });
-    html += '</div><div class="cal-week-body">';
-    days.forEach(d => {
-      const dk = dateKey(d);
-      const events = data.filter(s => s.date === dk).sort((a,b)=>(a.startTime||'').localeCompare(b.startTime||''));
-      const isTd = isToday(d);
-      html += `<div class="cal-week-col ${isTd?'today-col':''}">`;
-      events.forEach(s => {
-        const unfinalized = !s.finalizedInstructors || s.finalizedInstructors.trim()==='';
-        html += `<div class="entry-card ${unfinalized?'entry-unfinalized':''}" data-id="${s.id}">
-          <div class="entry-course">${escapeHtml(s.course||'—')}${s.type?' · '+escapeHtml(s.type):''}</div>
-          <div class="entry-topic">${escapeHtml(s.topic||'No topic yet')}</div>
-          <div class="entry-meta">${s.startTime||'?'}${s.endTime?' – '+s.endTime:''} · ${escapeHtml(s.primaryInstructor||s.instructorProposed||'No instructor yet')}</div>
-        </div>`;
+
+    // One row per time slot
+    TIME_SLOTS.forEach(slot => {
+      if (slot.type === 'lunch') {
+        html += `<div class="cwg-time-label lunch-label">${slot.label}</div>`;
+        weekdays.forEach(d => {
+          const isTd = isToday(d);
+          html += `<div class="cwg-cell lunch-row ${isTd?'today-col':''}"><span class="cwg-lunch-text">Lunch</span></div>`;
+        });
+        return;
+      }
+
+      html += `<div class="cwg-time-label">${slot.label}</div>`;
+      weekdays.forEach(d => {
+        const dk = dateKey(d);
+        const isTd = isToday(d);
+        // A session "belongs" to this slot if its start time falls within [slot.start, slot.end)
+        const events = data.filter(s => s.date === dk && s.startTime >= slot.start && s.startTime < slot.end);
+
+        html += `<div class="cwg-cell ${isTd?'today-col':''}" data-date="${dk}" data-start="${slot.start}">`;
+        if (events.length) {
+          events.forEach(s => {
+            const unfinalized = !s.finalizedInstructors || s.finalizedInstructors.trim()==='';
+            html += `<div class="entry-card ${unfinalized?'entry-unfinalized':''}" data-id="${s.id}">
+              <div class="entry-course">${escapeHtml(s.course||'—')}${s.type?' · '+escapeHtml(s.type):''}</div>
+              <div class="entry-topic">${escapeHtml(s.topic||'No topic yet')}</div>
+              <div class="entry-meta">${s.startTime||'?'}${s.endTime?' – '+s.endTime:''} · ${escapeHtml(s.primaryInstructor||s.instructorProposed||'No instructor yet')}</div>
+            </div>`;
+          });
+        } else {
+          html += `<div class="cwg-add-btn" data-date="${dk}" data-start="${slot.start}">+</div>`;
+        }
+        html += `</div>`;
       });
-      html += `<button class="day-add-btn" data-date="${dk}">+ Add session</button>`;
-      html += '</div>';
     });
+
     html += '</div></div>';
     container.innerHTML = html;
     wireCalendarEvents(container);
 
-    container.querySelectorAll('.day-add-btn').forEach(btn => btn.addEventListener('click', () => openForm(null, btn.dataset.date)));
-    container.querySelectorAll('.cal-week-day-head').forEach(head => head.addEventListener('click', () => openForm(null, head.dataset.date)));
+    container.querySelectorAll('.cwg-add-btn').forEach(btn => {
+      btn.addEventListener('click', e => { e.stopPropagation(); openForm(null, btn.dataset.date, btn.dataset.start); });
+    });
+    container.querySelectorAll('.cwg-day-head').forEach(head => {
+      head.addEventListener('click', () => openForm(null, head.dataset.date));
+    });
   }
 
   function wireCalendarEvents(container) {
@@ -366,7 +408,7 @@
       list.map(c => `<option value="${c.code}" ${c.code===selectedCode?'selected':''}>${c.code} – ${c.name}</option>`).join('');
   }
 
-  function openForm(session, dateStr) {
+  function openForm(session, dateStr, prefillStart) {
     const isEdit = !!session;
     const isLocked = !submissionsOpen;
     const readOnly = isLocked && !isAdmin;
@@ -375,6 +417,7 @@
     const weekNum = session?.week || calcAcademicWeekNumber(dateStr);
     const sessionYear = session?.year || '';
     const disabledAttr = readOnly ? 'disabled' : '';
+    const startValue = session?.startTime || prefillStart || '';
 
     modal.innerHTML = `
       <div class="modal-backdrop" id="modal-backdrop"></div>
@@ -411,7 +454,7 @@
               </div>
               <div class="form-field">
                 <label class="form-label">Start Time <span class="req">*</span></label>
-                <input type="time" class="form-input" id="f-start" value="${session?.startTime||''}" required />
+                <input type="time" class="form-input" id="f-start" value="${startValue}" required />
               </div>
               <div class="form-field">
                 <label class="form-label">End Time</label>
