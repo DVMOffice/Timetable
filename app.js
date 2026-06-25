@@ -16,8 +16,9 @@
   };
   firebase.initializeApp(firebaseConfig);
   const db = firebase.firestore();
-  const SESSIONS_COL = 'sessions';
-  const HISTORY_COL  = 'sessions_history';
+  const SESSIONS_COL  = 'sessions';
+  const HISTORY_COL   = 'sessions_history';
+  const CHANGELOG_COL = 'change_log';
 
   const connDot  = document.getElementById('conn-dot');
   const connText = document.getElementById('conn-text');
@@ -506,9 +507,6 @@
     modal.classList.remove('open'); modal.innerHTML = '';
   }
 
-  const CHANGELOG_COL = 'change_log';
-
-  // Human-readable labels for the changelog
   const FIELD_LABELS = {
     week: 'Week', dateRange: 'Date Range', academicCycle: 'Academic Cycle',
     date: 'Date', day: 'Day', year: 'Year', startTime: 'Start Time', endTime: 'End Time',
