@@ -808,7 +808,10 @@
       <span>${submissionsOpen
         ? '🟢 <strong>Submissions are open</strong> — faculty can add or edit sessions.'
         : '🔒 <strong>Submissions are closed</strong> — the timetable is locked for the term. Contact the admin for last-minute changes.'}</span>
-      ${isAdmin ? `<button id="toggle-submissions-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">${submissionsOpen ? 'Close Submissions' : 'Open Submissions'}</button>` : ''}
+      <span style="display:flex;gap:8px;flex-shrink:0">
+        ${isAdmin ? `<button id="import-csv-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>` : ''}
+        ${isAdmin ? `<button id="toggle-submissions-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">${submissionsOpen ? 'Close Submissions' : 'Open Submissions'}</button>` : ''}
+      </span>
     `;
 
     const intro = document.querySelector('.page-intro');
@@ -816,7 +819,202 @@
 
     if (isAdmin) {
       document.getElementById('toggle-submissions-btn').addEventListener('click', toggleSubmissionsOpen);
+      document.getElementById('import-csv-btn').addEventListener('click', openImportModal);
     }
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // CSV BULK IMPORT (admin only)
+  // ════════════════════════════════════════════════════════════
+
+  // Maps possible CSV header variants → our internal field names.
+  // Add more variants here if your CSV uses different column names.
+  const CSV_FIELD_ALIASES = {
+    week:                 ['week', 'week #', 'week#'],
+    dateRange:            ['date range', 'daterange'],
+    academicCycle:        ['academic cycle', 'cycle'],
+    date:                 ['date'],
+    day:                  ['day'],
+    year:                 ['year', 'program year'],
+    startTime:            ['start time', 'starttime'],
+    endTime:              ['end time', 'endtime'],
+    course:               ['course', 'course code', 'course #'],
+    type:                 ['type'],
+    topic:                ['topic'],
+    numInstructors:       ['# of instructors', 'num instructors', 'number of instructors'],
+    instructorProposed:   ['instructor proposed', 'proposed instructor'],
+    primaryInstructor:    ['primary instructor', 'primary instructor (lab)', 'primary instructor (lec/srl)'],
+    secondaryInstructor:  ['secondary instructor', 'secondary instructor (lab)'],
+    finalizedInstructors: ['finalized instructors', 'finalized instructor (lec/srl)', 'finalized instructor (lab)'],
+    notes:                ['notes'],
+  };
+
+  function parseCSV(text) {
+    // Simple CSV parser that handles quoted fields with commas inside them
+    const rows = [];
+    let row = [], field = '', inQuotes = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i], next = text[i+1];
+      if (inQuotes) {
+        if (c === '"' && next === '"') { field += '"'; i++; }
+        else if (c === '"') { inQuotes = false; }
+        else { field += c; }
+      } else {
+        if (c === '"') inQuotes = true;
+        else if (c === ',') { row.push(field); field = ''; }
+        else if (c === '\r') { /* skip */ }
+        else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+        else field += c;
+      }
+    }
+    if (field.length || row.length) { row.push(field); rows.push(row); }
+    return rows.filter(r => r.length > 1 || r[0] !== '');
+  }
+
+  function mapCsvToSessions(rows) {
+    const headers = rows[0].map(h => h.trim().toLowerCase());
+    const fieldForHeader = {};
+    headers.forEach((h, i) => {
+      for (const [field, aliases] of Object.entries(CSV_FIELD_ALIASES)) {
+        if (aliases.includes(h)) { fieldForHeader[i] = field; break; }
+      }
+    });
+
+    return rows.slice(1).map(cells => {
+      const session = {};
+      cells.forEach((val, i) => {
+        const field = fieldForHeader[i];
+        if (field) session[field] = (val || '').trim();
+      });
+      // Normalize date to YYYY-MM-DD if it isn't already
+      if (session.date) {
+        const d = new Date(session.date);
+        if (!isNaN(d.getTime()) && !/^\d{4}-\d{2}-\d{2}$/.test(session.date)) {
+          session.date = d.toISOString().slice(0,10);
+        }
+      }
+      // Auto-fill anything missing from the date, same logic as the manual form
+      if (session.date) {
+        if (!session.day) session.day = calcDayName(session.date);
+        if (!session.week) session.week = calcAcademicWeekNumber(session.date);
+        if (!session.dateRange) session.dateRange = calcDateRange(session.date);
+        if (!session.academicCycle) session.academicCycle = getAcademicCycleLabel(session.date);
+      }
+      // Auto-fill courseName/courseDept from our course list if we recognize the course code
+      if (session.course) {
+        const info = CourseData.findCourse(session.course);
+        if (info) { session.courseName = info.name; session.courseDept = info.dept; }
+      }
+      if (session.numInstructors) session.numInstructors = parseInt(session.numInstructors) || null;
+      if (session.week) session.week = parseInt(session.week) || null;
+      return session;
+    }).filter(s => s.course && s.date); // skip rows missing the essentials
+  }
+
+  function openImportModal() {
+    const modal = document.getElementById('modal');
+    modal.innerHTML = `
+      <div class="modal-backdrop" id="modal-backdrop"></div>
+      <div class="modal-box" style="width:min(720px,94vw)">
+        <div class="modal-strip"></div>
+        <button class="modal-close" id="modal-close">✕</button>
+        <div class="modal-header">
+          <div class="modal-title">⬆ Import Sessions from CSV</div>
+          <div class="modal-subtitle">Upload a CSV file — column names will be matched automatically. Missing fields (Day, Week, Date Range, Academic Cycle) are calculated from the date if not provided.</div>
+        </div>
+        <div class="modal-body">
+          <div class="form-field full">
+            <input type="file" accept=".csv" id="csv-file-input" class="form-input" />
+          </div>
+          <div id="import-preview"></div>
+        </div>
+        <div class="modal-footer">
+          <div></div>
+          <div style="display:flex;align-items:center;gap:12px">
+            <span class="save-status" id="import-status"></span>
+            <button class="btn btn-secondary" id="import-cancel-btn">Cancel</button>
+            <button class="btn btn-primary" id="import-confirm-btn" disabled>Import All</button>
+          </div>
+        </div>
+      </div>`;
+
+    modal.classList.add('open');
+    document.getElementById('modal-close').onclick = closeForm;
+    document.getElementById('modal-backdrop').onclick = closeForm;
+    document.getElementById('import-cancel-btn').onclick = closeForm;
+
+    let parsedSessions = [];
+
+    document.getElementById('csv-file-input').addEventListener('change', e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => {
+        const rows = parseCSV(ev.target.result);
+        parsedSessions = mapCsvToSessions(rows);
+        renderImportPreview(parsedSessions);
+        document.getElementById('import-confirm-btn').disabled = parsedSessions.length === 0;
+      };
+      reader.readAsText(file);
+    });
+
+    function renderImportPreview(sessions) {
+      const el = document.getElementById('import-preview');
+      if (!sessions.length) {
+        el.innerHTML = `<div style="padding:14px;text-align:center;color:var(--danger);font-size:12.5px">No valid rows found — make sure the CSV has a Course and Date column.</div>`;
+        return;
+      }
+      const preview = sessions.slice(0, 8);
+      el.innerHTML = `
+        <div style="font-size:12px;color:var(--text-3);margin:8px 0">Found <strong>${sessions.length}</strong> rows. Preview (first ${preview.length}):</div>
+        <div style="overflow-x:auto;max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:6px">
+          <table style="width:100%;border-collapse:collapse;font-size:11.5px">
+            <thead><tr style="background:var(--surface-2)">
+              <th style="padding:6px 8px;text-align:left">Week</th>
+              <th style="padding:6px 8px;text-align:left">Date</th>
+              <th style="padding:6px 8px;text-align:left">Course</th>
+              <th style="padding:6px 8px;text-align:left">Type</th>
+              <th style="padding:6px 8px;text-align:left">Topic</th>
+              <th style="padding:6px 8px;text-align:left">Instructor</th>
+            </tr></thead>
+            <tbody>
+              ${preview.map(s => `<tr style="border-top:1px solid var(--border)">
+                <td style="padding:6px 8px">${escapeHtml(String(s.week||''))}</td>
+                <td style="padding:6px 8px">${escapeHtml(s.date||'')}</td>
+                <td style="padding:6px 8px">${escapeHtml(s.course||'')}</td>
+                <td style="padding:6px 8px">${escapeHtml(s.type||'')}</td>
+                <td style="padding:6px 8px">${escapeHtml((s.topic||'').slice(0,30))}</td>
+                <td style="padding:6px 8px">${escapeHtml(s.primaryInstructor||s.instructorProposed||'')}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`;
+    }
+
+    document.getElementById('import-confirm-btn').onclick = async () => {
+      const statusEl = document.getElementById('import-status');
+      const btn = document.getElementById('import-confirm-btn');
+      btn.disabled = true;
+      statusEl.className = 'save-status saving';
+
+      let done = 0;
+      for (const session of parsedSessions) {
+        statusEl.textContent = `Importing ${done+1} of ${parsedSessions.length}…`;
+        try {
+          const data = { ...session, updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
+          const ref = await db.collection(SESSIONS_COL).add({ ...data, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
+          await db.collection(HISTORY_COL).add({ sessionId: ref.id, ...data, savedAt: firebase.firestore.FieldValue.serverTimestamp() });
+          done++;
+        } catch (err) {
+          console.error('[Import row error]', err, session);
+        }
+      }
+
+      statusEl.className = 'save-status success';
+      statusEl.textContent = `Imported ${done} of ${parsedSessions.length} ✓`;
+      showToast(`${done} sessions imported`);
+      setTimeout(closeForm, 1200);
+    };
   }
 
   // ════════════════════════════════════════════════════════════
