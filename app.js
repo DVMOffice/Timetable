@@ -830,6 +830,7 @@
   // Maps possible CSV header variants → our internal field names.
   // Add more variants here if your CSV uses different column names.
   const CSV_FIELD_ALIASES = {
+    rowId:                ['row id', 'rowid', 'row #', 'session id'],
     week:                 ['week', 'week #', 'week#'],
     dateRange:            ['date range', 'daterange'],
     academicCycle:        ['academic cycle', 'cycle'],
@@ -839,6 +840,8 @@
     startTime:            ['start time', 'starttime'],
     endTime:              ['end time', 'endtime'],
     course:               ['course', 'course code', 'course #'],
+    courseName:           ['course name'],
+    courseDept:           ['department', 'dept'],
     type:                 ['type'],
     topic:                ['topic'],
     numInstructors:       ['# of instructors', 'num instructors', 'number of instructors'],
