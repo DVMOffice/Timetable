@@ -1,4 +1,4 @@
-// app.js — UCVM Timetable main orchestration logic
+// app.js — 2026-2027 UCVM Timetable main orchestration logic
 
 (async function() {
   'use strict';
@@ -23,32 +23,25 @@
   const connDot  = document.getElementById('conn-dot');
   const connText = document.getElementById('conn-text');
 
+  const SPY_HILL_URL = 'https://uofc.sharepoint.com/:f:/r/sites/YearTeachersCommittees/Shared%20Documents/General/2026-27%20Timetable/Spy%20Hill%20Labs%20Schedules%202026-2027?d=wa5cd30d6085246e6929b67f2c8a090f3&csf=1&web=1&e=sMu679';
+
+  const { DOW7, dateKey, addDays, isToday, buildMonthGrid, buildWeekDays,
+          calcAcademicWeekNumber, getAcademicCycleLabel, calcDayName,
+          weekHeaderLabel, weekRangeLabel, weekButtonLabel, weekMonday,
+          MONTH_SEQUENCE, blockPosition, hourGridlines, monthLabel } = CalendarEngine;
+
+  function escapeHtml(str) {
+    const div = document.createElement('div'); div.textContent = str || ''; return div.innerHTML;
+  }
+
   // ════════════════════════════════════════════════════════════
   // STATE
   // ════════════════════════════════════════════════════════════
   let calView     = 'week';
   let calDate     = new Date();
   let allSessions = [];
-
-  // ── Fixed time slots for the Week grid view ─────────────────
-  // Edit this array to change the standard daily schedule blocks.
-  // type: 'class' = a normal teaching slot, 'lunch' = a labeled break row (no sessions assigned to it)
-  const TIME_SLOTS = [
-    { start: '08:30', end: '10:00', label: '8:30-10:00',  type: 'class' },
-    { start: '10:15', end: '11:45', label: '10:15-11:45', type: 'class' },
-    { start: '11:45', end: '13:00', label: 'Lunch',       type: 'lunch' },
-    { start: '13:00', end: '14:30', label: '1:00-2:30',   type: 'class' },
-    { start: '14:45', end: '16:15', label: '2:45-4:15',   type: 'class' },
-  ];
   let filters = { search: '', year: 'all', month: 'all', week: 'all', course: 'all', type: 'all' };
-
-  const { DOW7, dateKey, addDays, isToday, buildMonthGrid, buildWeekDays,
-          calcAcademicWeekNumber, getAcademicCycleLabel, calcDayName, calcDateRange,
-          monthLabel, weekLabel } = CalendarEngine;
-
-  function escapeHtml(str) {
-    const div = document.createElement('div'); div.textContent = str || ''; return div.innerHTML;
-  }
+  let colorsOn = JSON.parse(localStorage.getItem('timetable_colors') ?? 'true');
 
   // ════════════════════════════════════════════════════════════
   // FIRESTORE LIVE LISTENER
@@ -58,6 +51,8 @@
       allSessions = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       connDot.className = 'conn-dot online';
       connText.textContent = 'Connected';
+      populateWeekButtons();
+      populateUpdatesFilters();
       renderAll();
     },
     err => {
@@ -69,40 +64,84 @@
   );
 
   // ── Latest Updates feed (from change_log) ──────────────────
-  db.collection(CHANGELOG_COL).orderBy('changedAt', 'desc').limit(15).onSnapshot(
-    snap => {
-      const updates = snap.docs.map(d => d.data());
-      renderLatestUpdates(updates);
-    },
+  let latestChanges = [];
+  db.collection(CHANGELOG_COL).orderBy('changedAt', 'desc').limit(150).onSnapshot(
+    snap => { latestChanges = snap.docs.map(d => d.data()); renderLatestUpdates(); },
     err => console.error('[Changelog listener]', err)
   );
 
-  function renderLatestUpdates(updates) {
+  function populateUpdatesFilters() {
+    const courseSel = document.getElementById('updates-filter-course');
+    const weekSel = document.getElementById('updates-filter-week');
+    if (courseSel.options.length <= 1) {
+      CourseData.getAllCourses().forEach(c => {
+        const o = document.createElement('option'); o.value = c.code; o.textContent = c.code; courseSel.appendChild(o);
+      });
+    }
+    const weeks = [...new Set(allSessions.map(s => s.week).filter(w => w != null))].sort((a,b)=>a-b);
+    const currentWeekVal = weekSel.value;
+    weekSel.innerHTML = '<option value="all">All Weeks</option>' + weeks.map(w => `<option value="${w}">Week ${w}</option>`).join('');
+    if ([...weekSel.options].some(o => o.value === currentWeekVal)) weekSel.value = currentWeekVal;
+  }
+
+  function renderLatestUpdates() {
     const el = document.getElementById('latest-updates-body');
-    if (!el) return;
+    const yf = document.getElementById('updates-filter-year').value;
+    const cf = document.getElementById('updates-filter-course').value;
+    const wf = document.getElementById('updates-filter-week').value;
+
+    let updates = latestChanges;
+    if (yf !== 'all') updates = updates.filter(u => String(u.sessionYear) === yf);
+    if (cf !== 'all') updates = updates.filter(u => (u.course||'').split(' - ')[0].trim() === cf);
+    if (wf !== 'all') updates = updates.filter(u => String(u.sessionWeek) === wf);
+    updates = updates.slice(0, 20);
+
     if (!updates.length) {
-      el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-3);font-size:12px">No updates yet</div>`;
+      el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-3);font-size:12px">No updates match this filter</div>`;
       return;
     }
     el.innerHTML = updates.map(u => {
       const when = u.changedAt?.toDate ? u.changedAt.toDate() : null;
       const whenStr = when ? when.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }) + ' at ' + when.toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit' }) : '—';
-      const yearMatch = (u.course || '').match(/^(\d+)/);
-      const courseCode = yearMatch ? yearMatch[1] : '';
-      const year = CourseData.getYearForCourse(courseCode);
-      const yearLabel = year ? `Year ${year}` : '';
       return `<div style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px">
         <div style="color:var(--text-3);font-size:10.5px;margin-bottom:3px">${whenStr}</div>
-        <div style="line-height:1.4">
-          ${yearLabel ? `<strong>${yearLabel}</strong>, ` : ''}<strong>${escapeHtml(u.course||'')}</strong> —
-          new <strong>${escapeHtml(u.fieldChanged||'')}</strong>
-        </div>
+        <div style="line-height:1.4"><strong>${escapeHtml(u.course||'')}</strong> — new <strong>${escapeHtml(u.fieldChanged||'')}</strong></div>
         <div style="margin-top:3px;line-height:1.4">
           ${u.oldValue ? `<span style="color:var(--text-3);text-decoration:line-through">${escapeHtml(u.oldValue)}</span> → ` : ''}
           <span style="color:var(--accent);font-weight:600">${escapeHtml(u.newValue||'(removed)')}</span>
         </div>
       </div>`;
     }).join('');
+  }
+  ['updates-filter-year','updates-filter-course','updates-filter-week'].forEach(id =>
+    document.getElementById(id).addEventListener('change', renderLatestUpdates));
+
+  // ════════════════════════════════════════════════════════════
+  // ROOM + COLOR
+  // ════════════════════════════════════════════════════════════
+  function getRoom(s) { return CourseData.getRoom(s); }
+
+  // Deterministic, lighter pastel color per course code (auto-generated, not hand-picked)
+  const colorCache = {};
+  function getCourseColor(course) {
+    if (!course) return { bg: 'var(--surface-2)', border: 'var(--border-2)' };
+    if (colorCache[course]) return colorCache[course];
+    let hash = 0;
+    for (let i = 0; i < course.length; i++) hash = course.charCodeAt(i) + ((hash << 5) - hash);
+    const hue = Math.abs(hash) % 360;
+    const c = { bg: `hsl(${hue}, 62%, 92%)`, border: `hsl(${hue}, 55%, 62%)` };
+    colorCache[course] = c;
+    return c;
+  }
+
+  function getInstructorDisplay(s) {
+    if (String(s.type||'').toUpperCase() === 'LAB') {
+      const parts = [];
+      if (s.primaryInstructor) parts.push(`Primary: ${s.primaryInstructor}`);
+      if (s.secondaryInstructor) parts.push(`Secondary: ${s.secondaryInstructor}`);
+      return parts.length ? parts.join(' · ') : 'No instructor yet';
+    }
+    return s.finalizedInstructors || 'TBD';
   }
 
   // ════════════════════════════════════════════════════════════
@@ -111,10 +150,10 @@
   function getFiltered() {
     let data = [...allSessions];
     if (filters.year   !== 'all') data = data.filter(s => String(s.year) === String(filters.year));
-    if (filters.month  !== 'all') data = data.filter(s => s.date && (new Date(s.date+'T12:00:00').getMonth()+1) === parseInt(filters.month));
     if (filters.week   !== 'all') data = data.filter(s => String(s.week) === String(filters.week));
     if (filters.course !== 'all') data = data.filter(s => String(s.course) === String(filters.course));
     if (filters.type   !== 'all') data = data.filter(s => s.type === filters.type);
+    if (filters.month  !== 'all') data = data.filter(s => s.date && s.date.slice(0,7) === filters.month);
     if (filters.search) {
       const q = filters.search.toLowerCase();
       data = data.filter(s =>
@@ -123,49 +162,95 @@
         (s.topic||'').toLowerCase().includes(q) ||
         (s.primaryInstructor||'').toLowerCase().includes(q) ||
         (s.secondaryInstructor||'').toLowerCase().includes(q) ||
-        (s.instructorProposed||'').toLowerCase().includes(q));
+        (s.finalizedInstructors||'').toLowerCase().includes(q));
     }
     return data;
   }
 
   function renderAll() {
-    renderCalendar();
-    renderTotalCount();
+    const searchActive = !!filters.search;
+    document.getElementById('search-results-card').classList.toggle('hidden', !searchActive);
+    document.querySelector('.cal-card:not(.search-results-card)').classList.toggle('hidden', searchActive);
+    if (searchActive) renderSearchResults(); else renderCalendar();
     renderChips();
     populateCourseFilterFromYear(filters.year);
-    populateWeekFilter();
-  }
-  function renderTotalCount() {
-    document.getElementById('total-count').textContent = allSessions.length;
   }
 
-  function populateWeekFilter() {
-    const sel = document.getElementById('filter-week');
-    const current = sel.value;
-    const weeks = [...new Set(allSessions.map(s => s.week).filter(w => w != null))].sort((a,b) => a-b);
-    sel.innerHTML = '<option value="all">All Weeks</option>' +
-      weeks.map(w => `<option value="${w}">Week ${w}</option>`).join('');
-    if ([...sel.options].some(o => o.value === current)) sel.value = current;
-  }
-
-  // ── Filter bar: Course dropdown depends on selected Year ───
   function populateCourseFilterFromYear(year) {
     const sel = document.getElementById('filter-course');
     const current = sel.value;
     sel.innerHTML = '<option value="all">All Courses</option>';
     const list = year === 'all' ? CourseData.getAllCourses() : CourseData.getCoursesForYear(year);
     list.forEach(c => {
-      const o = document.createElement('option');
-      o.value = c.code;
-      o.textContent = `${c.code} – ${c.name}`;
-      sel.appendChild(o);
+      const o = document.createElement('option'); o.value = c.code; o.textContent = `${c.code} – ${c.name}`; sel.appendChild(o);
     });
     if ([...sel.options].some(o => o.value === current)) sel.value = current;
     else { sel.value = 'all'; filters.course = 'all'; }
   }
 
   // ════════════════════════════════════════════════════════════
-  // CALENDAR RENDER — MONTH + WEEK
+  // MONTH DROPDOWN (Aug 2026 → Apr 2027)
+  // ════════════════════════════════════════════════════════════
+  (function populateMonthDropdown() {
+    const sel = document.getElementById('filter-month');
+    MONTH_SEQUENCE.forEach(m => {
+      const o = document.createElement('option'); o.value = m.value; o.textContent = m.label; sel.appendChild(o);
+    });
+  })();
+  document.getElementById('filter-month').addEventListener('change', e => { filters.month = e.target.value; renderAll(); });
+
+  // ════════════════════════════════════════════════════════════
+  // YEAR + WEEK BUTTON NAVIGATION
+  // ════════════════════════════════════════════════════════════
+  document.getElementById('year-btn-row').addEventListener('click', e => {
+    const btn = e.target.closest('.pill-btn'); if (!btn) return;
+    document.querySelectorAll('#year-btn-row .pill-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    filters.year = btn.dataset.year;
+    filters.course = 'all';
+    renderAll();
+  });
+
+  function populateWeekButtons() {
+    const row = document.getElementById('week-btn-row');
+    if (row.dataset.built) return;
+    row.dataset.built = '1';
+    for (let w = 1; w <= 17; w++) {
+      const btn = document.createElement('button');
+      btn.className = 'pill-btn'; btn.dataset.week = w; btn.textContent = weekButtonLabel(w);
+      row.appendChild(btn);
+    }
+  }
+  document.getElementById('week-btn-row').addEventListener('click', e => {
+    const btn = e.target.closest('.pill-btn'); if (!btn) return;
+    document.querySelectorAll('#week-btn-row .pill-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    filters.week = btn.dataset.week;
+    if (btn.dataset.week !== 'all') {
+      calDate = weekMonday(parseInt(btn.dataset.week));
+      calView = 'week';
+      document.getElementById('cal-week-btn').classList.add('active');
+      document.getElementById('cal-month-btn').classList.remove('active');
+    }
+    renderAll();
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // COLOR TOGGLE
+  // ════════════════════════════════════════════════════════════
+  function updateColorToggleBtn() {
+    document.getElementById('color-toggle').textContent = `🎨 Colors: ${colorsOn ? 'On' : 'Off'}`;
+  }
+  updateColorToggleBtn();
+  document.getElementById('color-toggle').addEventListener('click', () => {
+    colorsOn = !colorsOn;
+    localStorage.setItem('timetable_colors', JSON.stringify(colorsOn));
+    updateColorToggleBtn();
+    renderAll();
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // CALENDAR RENDER — MONTH + WEEK (proportional time-grid)
   // ════════════════════════════════════════════════════════════
   function renderCalendar() {
     const data = getFiltered();
@@ -177,13 +262,16 @@
       renderMonthView(el, data);
     } else {
       const days = buildWeekDays(calDate);
-      labelEl.textContent = weekLabel(days);
+      const wk = calcAcademicWeekNumber(dateKey(days[0]));
+      labelEl.textContent = weekHeaderLabel(days, wk);
       renderWeekView(el, days, data);
     }
   }
 
   function renderMonthView(container, data) {
-    const cells = buildMonthGrid(calDate.getFullYear(), calDate.getMonth());
+    const cells = buildMonthGrid(calDate.getFullYear(), calDate.getMonth())
+      .filter(c => { const dow = c.date.getDay(); return dow !== 0 && dow !== 6; }); // Mon-Fri only
+
     let html = `<div class="cal-month">
       <div class="cal-dow-header">${DOW7.map(d=>`<div class="cal-dow">${d}</div>`).join('')}</div>
       <div class="cal-grid">`;
@@ -192,130 +280,123 @@
       const dk = dateKey(cell.date);
       const events = data.filter(s => s.date === dk).sort((a,b)=>(a.startTime||'').localeCompare(b.startTime||''));
       const isTd = isToday(cell.date);
-      const dow  = cell.date.getDay();
-      const isWeekend = dow === 0 || dow === 6;
-      const cls = ['cal-cell', !cell.current && 'cal-other', isTd && 'cal-today', isWeekend && !isTd && 'weekend'].filter(Boolean).join(' ');
+      const cls = ['cal-cell', !cell.current && 'cal-other', isTd && 'cal-today'].filter(Boolean).join(' ');
 
       html += `<div class="${cls}">
-        <div class="cal-date-num">
-          <span>${isTd ? `<span class="today-dot">${cell.date.getDate()}</span>` : cell.date.getDate()}</span>
-          <span class="cal-add-mini" data-date="${dk}" title="Add session">＋</span>
-        </div>
+        <div class="cal-date-num">${isTd ? `<span class="today-dot">${cell.date.getDate()}</span>` : cell.date.getDate()}</div>
         <div class="cal-events">`;
 
       const MAX = 3;
-      events.slice(0, MAX).forEach(s => html += renderEventChip(s));
+      events.slice(0, MAX).forEach(s => html += renderMonthChip(s));
       if (events.length > MAX) {
         const overflow = events.slice(MAX);
         html += `<div class="cal-overflow-wrap">`;
-        overflow.forEach(s => html += renderEventChip(s, true));
+        overflow.forEach(s => html += renderMonthChip(s, true));
         html += `<button class="cal-more-btn" data-count="${overflow.length}">+${overflow.length} more</button></div>`;
       }
       html += `</div></div>`;
     });
     html += '</div></div>';
     container.innerHTML = html;
-    wireCalendarEvents(container);
-
-    container.querySelectorAll('.cal-add-mini').forEach(btn => {
-      btn.addEventListener('click', e => { e.stopPropagation(); openForm(null, btn.dataset.date); });
-    });
+    wireBlockClicks(container);
+    wireOverflowButtons(container);
   }
 
-  function renderEventChip(s, hidden) {
-    const unfinalized = !s.finalizedInstructors || s.finalizedInstructors.trim()==='';
-    const bg = unfinalized ? '#FFFBEB' : '#EAF0FB';
-    const dot = unfinalized ? '#D97706' : '#1A3A6B';
-    return `<div class="cal-event ${hidden?'cal-event-hidden':''} ${unfinalized?'cal-event-unfinalized':''}" style="background:${bg}" data-id="${s.id}">
-      <span class="cal-event-dot" style="background:${dot}"></span>
-      <span class="cal-event-text">${escapeHtml(s.course||'—')} · ${escapeHtml(s.type||'')}</span>
+  function renderMonthChip(s, hidden) {
+    const color = colorsOn ? getCourseColor(s.course) : { bg: 'var(--surface-2)', border: 'var(--border-2)' };
+    return `<div class="cal-event ${hidden?'cal-event-hidden':''}" style="background:${color.bg};border-left-color:${color.border}" data-id="${s.id}">
+      <span class="cal-event-l1">${escapeHtml(s.course||'—')} ${escapeHtml(s.type||'')}</span>
+      <span class="cal-event-l2">${escapeHtml(s.topic||'')}</span>
     </div>`;
   }
 
   function renderWeekView(container, days, data) {
-    // Only Mon-Fri for the fixed grid (matches the reference timetable layout)
-    const weekdays = days.slice(0, 5);
+    const lines = hourGridlines();
 
-    let html = `<div class="cal-week"><div class="cal-week-grid">`;
-
-    // Header row: corner cell + 5 day headers
-    html += `<div class="cwg-corner">Time</div>`;
-    weekdays.forEach((d, i) => {
+    let html = `<div class="tg-wrap">
+      <div class="tg-corner"></div>`;
+    days.forEach((d,i) => {
       const isTd = isToday(d);
-      html += `<div class="cwg-day-head ${isTd?'today-head':''}" data-date="${dateKey(d)}">
-        <div class="week-dow">${DOW7[i]}</div>
-        <div class="week-date">${d.getDate()}</div>
+      html += `<div class="tg-day-head ${isTd?'today-head':''}">
+        <div class="week-dow">${DOW7[i]}</div><div class="week-date">${d.getDate()}</div>
       </div>`;
     });
+    html += `</div>`;
 
-    // One row per time slot
-    TIME_SLOTS.forEach(slot => {
-      if (slot.type === 'lunch') {
-        html += `<div class="cwg-time-label lunch-label">${slot.label}</div>`;
-        weekdays.forEach(d => {
-          const isTd = isToday(d);
-          html += `<div class="cwg-cell lunch-row ${isTd?'today-col':''}"><span class="cwg-lunch-text">Lunch</span></div>`;
-        });
-        return;
-      }
+    html += `<div class="tg-body">
+      <div class="tg-time-axis">${lines.map(l => `<div class="tg-hour-label" style="top:${l.topPct}%">${l.label}</div>`).join('')}</div>`;
 
-      html += `<div class="cwg-time-label">${slot.label}</div>`;
-      weekdays.forEach(d => {
-        const dk = dateKey(d);
-        const isTd = isToday(d);
-        // A session "belongs" to this slot if its start time falls within [slot.start, slot.end)
-        const events = data.filter(s => s.date === dk && s.startTime >= slot.start && s.startTime < slot.end);
-
-        html += `<div class="cwg-cell ${isTd?'today-col':''}" data-date="${dk}" data-start="${slot.start}">`;
-        if (events.length) {
-          events.forEach(s => {
-            const unfinalized = !s.finalizedInstructors || s.finalizedInstructors.trim()==='';
-            html += `<div class="entry-card ${unfinalized?'entry-unfinalized':''}" data-id="${s.id}">
-              <div class="entry-course">${escapeHtml(s.course||'—')}${s.type?' · '+escapeHtml(s.type):''}</div>
-              <div class="entry-topic">${escapeHtml(s.topic||'No topic yet')}</div>
-              <div class="entry-meta">${s.startTime||'?'}${s.endTime?' – '+s.endTime:''} · ${escapeHtml(s.primaryInstructor||s.instructorProposed||'No instructor yet')}</div>
-            </div>`;
-          });
-        } else {
-          html += `<div class="cwg-add-btn" data-date="${dk}" data-start="${slot.start}">+</div>`;
-        }
-        html += `</div>`;
+    days.forEach(d => {
+      const dk = dateKey(d);
+      const isTd = isToday(d);
+      const events = data.filter(s => s.date === dk);
+      html += `<div class="tg-day-col ${isTd?'today-col':''}">`;
+      html += lines.map(l => `<div class="tg-gridline" style="top:${l.topPct}%"></div>`).join('');
+      events.forEach(s => {
+        const { topPct, heightPct } = blockPosition(s.startTime, s.endTime);
+        const color = colorsOn ? getCourseColor(s.course) : null;
+        const style = colorsOn
+          ? `top:${topPct}%;height:${heightPct}%;background:${color.bg};border-left-color:${color.border}`
+          : `top:${topPct}%;height:${heightPct}%`;
+        html += `<div class="tg-block ${colorsOn?'':'colors-off'}" style="${style}" data-id="${s.id}">
+          <div class="tg-block-l1">${escapeHtml(s.course||'—')} ${escapeHtml(s.type||'')}</div>
+          <div class="tg-block-l2">${escapeHtml(s.topic||'')}</div>
+          <div class="tg-block-l3">${escapeHtml(getRoom(s))}</div>
+        </div>`;
       });
+      html += `</div>`;
     });
+    html += `</div>`;
 
-    html += '</div></div>';
     container.innerHTML = html;
-    wireCalendarEvents(container);
-
-    container.querySelectorAll('.cwg-add-btn').forEach(btn => {
-      btn.addEventListener('click', e => { e.stopPropagation(); openForm(null, btn.dataset.date, btn.dataset.start); });
-    });
-    container.querySelectorAll('.cwg-day-head').forEach(head => {
-      head.addEventListener('click', () => openForm(null, head.dataset.date));
-    });
+    wireBlockClicks(container);
   }
 
-  function wireCalendarEvents(container) {
-    container.querySelectorAll('.cal-event, .entry-card').forEach(el => {
+  function wireBlockClicks(container) {
+    container.querySelectorAll('.cal-event, .tg-block').forEach(el => {
       el.addEventListener('click', e => {
         e.stopPropagation();
         const s = allSessions.find(x => x.id === el.dataset.id);
-        if (s) openForm(s, s.date);
+        if (s) openDetail(s);
       });
     });
+  }
+  function wireOverflowButtons(container) {
     container.querySelectorAll('.cal-more-btn').forEach(btn => {
       btn.addEventListener('click', e => {
         e.stopPropagation();
         const wrap = btn.closest('.cal-overflow-wrap');
         const hidden = wrap.querySelectorAll('.cal-event-hidden');
         const expanded = btn.dataset.expanded === '1';
-        hidden.forEach(el => {
-          el.style.display = expanded ? 'none' : 'flex';
-          if (!expanded) el.onclick = e2 => { e2.stopPropagation(); const s = allSessions.find(x=>x.id===el.dataset.id); if (s) openForm(s, s.date); };
-        });
+        hidden.forEach(el => { el.style.display = expanded ? 'none' : 'flex'; });
         btn.dataset.expanded = expanded ? '0' : '1';
         btn.textContent = expanded ? `+${btn.dataset.count} more` : 'Show less';
+        wireBlockClicks(wrap);
       });
+    });
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // SEARCH RESULTS — LIST VIEW
+  // ════════════════════════════════════════════════════════════
+  function renderSearchResults() {
+    const data = getFiltered().sort((a,b) => (a.date||'').localeCompare(b.date||'') || (a.startTime||'').localeCompare(b.startTime||''));
+    const el = document.getElementById('search-results-body');
+    if (!data.length) { el.innerHTML = `<div class="results-empty">No sessions match your search</div>`; return; }
+    el.innerHTML = `<div class="results-table-wrap"><table class="results-table">
+      <thead><tr>
+        <th>Week</th><th>Date Range</th><th>Date</th><th>Day</th><th>Start</th><th>End</th>
+        <th>Year</th><th>Course</th><th>Type</th><th>Topic</th><th>Room</th><th>Instructor(s)</th>
+      </tr></thead>
+      <tbody>${data.map(s => `<tr data-id="${s.id}">
+        <td>${escapeHtml(String(s.week||''))}</td><td>${escapeHtml(s.dateRange||'')}</td><td>${escapeHtml(s.date||'')}</td>
+        <td>${escapeHtml(s.day||'')}</td><td>${escapeHtml(s.startTime||'')}</td><td>${escapeHtml(s.endTime||'')}</td>
+        <td>${escapeHtml(String(s.year||''))}</td><td>${escapeHtml(s.course||'')}</td><td>${escapeHtml(s.type||'')}</td>
+        <td>${escapeHtml(s.topic||'')}</td><td>${escapeHtml(getRoom(s))}</td><td>${escapeHtml(getInstructorDisplay(s))}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>`;
+    el.querySelectorAll('tr[data-id]').forEach(row => {
+      row.addEventListener('click', () => { const s = allSessions.find(x=>x.id===row.dataset.id); if (s) openDetail(s); });
     });
   }
 
@@ -345,38 +426,30 @@
   });
 
   // ════════════════════════════════════════════════════════════
-  // FILTER BAR WIRING
+  // SEARCH / RESET / CHIPS
   // ════════════════════════════════════════════════════════════
   document.getElementById('search-input').addEventListener('input', e => { filters.search = e.target.value; renderAll(); });
-  document.getElementById('filter-year').addEventListener('change', e => {
-    filters.year = e.target.value;
-    filters.course = 'all';
-    renderAll();
-  });
-  document.getElementById('filter-month').addEventListener('change', e => { filters.month = e.target.value; renderAll(); });
-  document.getElementById('filter-week').addEventListener('change', e => { filters.week = e.target.value; renderCalendar(); renderChips(); });
-  document.getElementById('filter-course').addEventListener('change', e => { filters.course = e.target.value; renderCalendar(); renderChips(); });
+  document.getElementById('filter-course').addEventListener('change', e => { filters.course = e.target.value; renderAll(); });
   document.getElementById('filter-type').addEventListener('change', e => { filters.type = e.target.value; renderAll(); });
 
   function resetFilters() {
     filters = { search:'', year:'all', month:'all', week:'all', course:'all', type:'all' };
     document.getElementById('search-input').value = '';
-    ['filter-year','filter-month','filter-week','filter-type'].forEach(id => document.getElementById(id).value='all');
+    document.getElementById('filter-month').value = 'all';
+    document.getElementById('filter-type').value = 'all';
+    document.querySelectorAll('#year-btn-row .pill-btn').forEach(b => b.classList.toggle('active', b.dataset.year==='all'));
+    document.querySelectorAll('#week-btn-row .pill-btn').forEach(b => b.classList.toggle('active', b.dataset.week==='all'));
     renderAll();
   }
   document.getElementById('reset-filters').addEventListener('click', resetFilters);
   document.getElementById('chips-clear').addEventListener('click', resetFilters);
 
-  const MONTH_NAMES = ['','January','February','March','April','May','June','July','August','September','October','November','December'];
   function renderChips() {
     const active = [];
     if (filters.year   !== 'all') active.push({k:'year',  l:`Year ${filters.year}`});
     if (filters.week   !== 'all') active.push({k:'week',  l:`Week ${filters.week}`});
-    if (filters.month  !== 'all') active.push({k:'month', l:`Month: ${MONTH_NAMES[parseInt(filters.month)]}`});
-    if (filters.course !== 'all') {
-      const c = CourseData.findCourse(filters.course);
-      active.push({k:'course', l:`Course: ${filters.course}${c?' – '+c.name.slice(0,24):''}`});
-    }
+    if (filters.month  !== 'all') { const m = MONTH_SEQUENCE.find(x=>x.value===filters.month); active.push({k:'month', l:`Month: ${m?m.label:filters.month}`}); }
+    if (filters.course !== 'all') { const c = CourseData.findCourse(filters.course); active.push({k:'course', l:`Course: ${filters.course}${c?' – '+c.name.slice(0,24):''}`}); }
     if (filters.type   !== 'all') active.push({k:'type',  l:`Type: ${filters.type}`});
     if (filters.search)           active.push({k:'search',l:`"${filters.search}"`});
 
@@ -389,17 +462,68 @@
       btn.addEventListener('click', e => {
         e.stopPropagation();
         const k = btn.dataset.k;
-        filters[k] = k==='search' ? '' : 'all';
-        if (k==='search') document.getElementById('search-input').value='';
-        else document.getElementById(`filter-${k}`).value='all';
-        if (k === 'year') filters.course = 'all';
+        if (k === 'search') { filters.search=''; document.getElementById('search-input').value=''; }
+        else if (k === 'month') { filters.month='all'; document.getElementById('filter-month').value='all'; }
+        else if (k === 'type') { filters.type='all'; document.getElementById('filter-type').value='all'; }
+        else if (k === 'course') { filters.course='all'; document.getElementById('filter-course').value='all'; }
+        else if (k === 'year') { filters.year='all'; filters.course='all'; document.querySelectorAll('#year-btn-row .pill-btn').forEach(b=>b.classList.toggle('active',b.dataset.year==='all')); }
+        else if (k === 'week') { filters.week='all'; document.querySelectorAll('#week-btn-row .pill-btn').forEach(b=>b.classList.toggle('active',b.dataset.week==='all')); }
         renderAll();
       });
     });
   }
 
   // ════════════════════════════════════════════════════════════
-  // SUBMISSION FORM MODAL
+  // READ-ONLY DETAIL POPUP (click any session block)
+  // ════════════════════════════════════════════════════════════
+  function openDetail(session) {
+    const modal = document.getElementById('modal');
+    const isLab = String(session.type||'').toUpperCase() === 'LAB';
+    const instructorRows = isLab
+      ? `<div class="detail-row"><span class="detail-label">Primary Instructor</span><span class="detail-value">${escapeHtml(session.primaryInstructor||'TBD')}</span></div>
+         <div class="detail-row"><span class="detail-label">Secondary Instructor</span><span class="detail-value">${escapeHtml(session.secondaryInstructor||'—')}</span></div>`
+      : `<div class="detail-row"><span class="detail-label">Instructor</span><span class="detail-value">${escapeHtml(session.finalizedInstructors||'TBD')}</span></div>`;
+
+    modal.innerHTML = `
+      <div class="modal-backdrop" id="modal-backdrop"></div>
+      <div class="modal-box">
+        <div class="modal-strip"></div>
+        <button class="modal-close" id="modal-close">✕</button>
+        <div class="modal-header">
+          <div class="modal-title">${escapeHtml(session.course||'')} ${escapeHtml(session.type||'')}</div>
+          <div class="modal-subtitle">${escapeHtml(session.day||'')}, ${escapeHtml(session.date||'')} · Week ${escapeHtml(String(session.week||''))}</div>
+        </div>
+        <div class="modal-body">
+          <div class="detail-row"><span class="detail-label">Course</span><span class="detail-value">${escapeHtml(session.course||'')} – ${escapeHtml(session.courseName||'')}</span></div>
+          <div class="detail-row"><span class="detail-label">Year</span><span class="detail-value">Year ${escapeHtml(String(session.year||''))}</span></div>
+          <div class="detail-row"><span class="detail-label">Time</span><span class="detail-value">${escapeHtml(session.startTime||'')} – ${escapeHtml(session.endTime||'')}</span></div>
+          <div class="detail-row"><span class="detail-label">Room</span><span class="detail-value">${escapeHtml(getRoom(session))}${isLab ? ` &nbsp;·&nbsp; <a class="detail-lab-link" href="${SPY_HILL_URL}" target="_blank" rel="noopener">View Spy Hill Lab Schedule ↗</a>` : ''}</span></div>
+          <div class="detail-row"><span class="detail-label">Topic</span><span class="detail-value">${escapeHtml(session.topic||'—')}</span></div>
+          ${instructorRows}
+          ${session.notes ? `<div class="detail-row"><span class="detail-label">Notes</span><span class="detail-value">${escapeHtml(session.notes)}</span></div>` : ''}
+        </div>
+        <div class="modal-footer">
+          <div></div>
+          <div style="display:flex;gap:10px">
+            <button class="btn btn-secondary" id="detail-close-btn">Close</button>
+            ${isAdmin ? `<button class="btn btn-primary" id="detail-edit-btn">Edit Session</button>` : ''}
+          </div>
+        </div>
+      </div>`;
+    modal.classList.add('open');
+    document.getElementById('modal-close').onclick = closeForm;
+    document.getElementById('modal-backdrop').onclick = closeForm;
+    document.getElementById('detail-close-btn').onclick = closeForm;
+    if (isAdmin) document.getElementById('detail-edit-btn').onclick = () => openForm(session);
+  }
+
+  function closeForm() {
+    const modal = document.getElementById('modal');
+    modal.classList.remove('open'); modal.innerHTML = '';
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // ADMIN EDIT FORM (admin only — opened from the detail popup)
   // ════════════════════════════════════════════════════════════
   function buildCourseOptionsHtml(year, selectedCode) {
     if (!year) return `<option value="">Select Year first…</option>`;
@@ -408,16 +532,9 @@
       list.map(c => `<option value="${c.code}" ${c.code===selectedCode?'selected':''}>${c.code} – ${c.name}</option>`).join('');
   }
 
-  function openForm(session, dateStr, prefillStart) {
-    const isEdit = !!session;
-    const isLocked = !submissionsOpen;
-    const readOnly = isLocked && !isAdmin;
+  function openForm(session) {
     const modal = document.getElementById('modal');
-    const day = calcDayName(dateStr);
-    const weekNum = session?.week || calcAcademicWeekNumber(dateStr);
     const sessionYear = session?.year || '';
-    const disabledAttr = readOnly ? 'disabled' : '';
-    const startValue = session?.startTime || prefillStart || '';
 
     modal.innerHTML = `
       <div class="modal-backdrop" id="modal-backdrop"></div>
@@ -425,225 +542,115 @@
         <div class="modal-strip"></div>
         <button class="modal-close" id="modal-close">✕</button>
         <div class="modal-header">
-          <div class="modal-title">${readOnly ? '🔒 Submissions Closed' : (isEdit ? 'Edit Session' : 'New Session')}</div>
-          <div class="modal-subtitle">${day}, ${new Date(dateStr+'T12:00:00').toLocaleDateString('en-CA',{month:'long',day:'numeric',year:'numeric'})} · Academic Week ${weekNum}${readOnly ? ' · Timetable submissions are currently closed — view only' : ''}</div>
+          <div class="modal-title">Edit Session</div>
+          <div class="modal-subtitle">${escapeHtml(session.day||'')}, ${escapeHtml(session.date||'')} · Week ${escapeHtml(String(session.week||''))}</div>
         </div>
         <div class="modal-body">
           <form id="session-form">
-            <fieldset ${disabledAttr} style="border:none;padding:0;margin:0">
             <div class="form-grid">
-              <div class="form-field">
-                <label class="form-label">Week # <span class="form-hint" style="text-transform:none;font-weight:400">(auto)</span></label>
-                <input type="number" class="form-input" id="f-week" value="${weekNum}" />
-              </div>
-              <div class="form-field">
-                <label class="form-label">Year <span class="req">*</span></label>
-                <select class="form-select" id="f-year" required>
-                  <option value="">Select…</option>
+              <div class="form-field"><label class="form-label">Year</label>
+                <select class="form-select" id="f-year">
                   <option value="1" ${sessionYear==='1'?'selected':''}>Year 1</option>
                   <option value="2" ${sessionYear==='2'?'selected':''}>Year 2</option>
                   <option value="3" ${sessionYear==='3'?'selected':''}>Year 3</option>
                 </select>
               </div>
-              <div class="form-field full">
-                <label class="form-label">Course <span class="req">*</span></label>
-                <select class="form-select" id="f-course" required ${!sessionYear?'disabled':''}>
-                  ${buildCourseOptionsHtml(sessionYear, session?.course)}
-                </select>
-                <span class="form-hint" id="course-hint">${sessionYear ? '' : 'Select a Year above to see its courses'}</span>
-              </div>
-              <div class="form-field">
-                <label class="form-label">Start Time <span class="req">*</span></label>
-                <input type="time" class="form-input" id="f-start" value="${startValue}" required />
-              </div>
-              <div class="form-field">
-                <label class="form-label">End Time</label>
-                <input type="time" class="form-input" id="f-end" value="${session?.endTime||''}" />
-              </div>
-              <div class="form-field">
-                <label class="form-label">Type <span class="req">*</span></label>
-                <select class="form-select" id="f-type" required>
-                  <option value="">Select type…</option>
-                  ${['Lecture','Lab','SRL'].map(t =>
-                    `<option value="${t}" ${session?.type===t?'selected':''}>${t}</option>`).join('')}
+              <div class="form-field"><label class="form-label">Type</label>
+                <select class="form-select" id="f-type">
+                  ${['LEC','LAB','SRL','Quiz/Midterm','OSCE','Exam'].map(t => `<option value="${t}" ${session.type===t?'selected':''}>${t}</option>`).join('')}
                 </select>
               </div>
-              <div class="form-field">
-                <label class="form-label"># of Instructors</label>
-                <input type="number" class="form-input" id="f-numinstr" min="0" value="${session?.numInstructors||''}" />
+              <div class="form-field full"><label class="form-label">Course</label>
+                <select class="form-select" id="f-course">${buildCourseOptionsHtml(sessionYear, session.course)}</select>
               </div>
-              <div class="form-field full">
-                <label class="form-label">Topic</label>
-                <input type="text" class="form-input" id="f-topic" placeholder="What is being covered" value="${escapeHtml(session?.topic||'')}" />
-              </div>
-              <div class="form-field">
-                <label class="form-label">Instructor Proposed</label>
-                <input type="text" class="form-input" id="f-instrproposed" placeholder="Suggested instructor" value="${escapeHtml(session?.instructorProposed||'')}" />
-                <span class="form-hint">Use this if the instructor isn't confirmed yet</span>
-              </div>
-              <div class="form-field">
-                <label class="form-label">Primary Instructor</label>
-                <input type="text" class="form-input" id="f-primary" value="${escapeHtml(session?.primaryInstructor||'')}" />
-              </div>
-              <div class="form-field">
-                <label class="form-label">Secondary Instructor</label>
-                <input type="text" class="form-input" id="f-secondary" value="${escapeHtml(session?.secondaryInstructor||'')}" />
-              </div>
-              <div class="form-field">
-                <label class="form-label">Finalized Instructors</label>
-                <input type="text" class="form-input" id="f-finalized" placeholder="Leave blank if TBD" value="${escapeHtml(session?.finalizedInstructors||'')}" />
-                <span class="form-hint">Leave blank until confirmed</span>
-              </div>
-              <div class="form-field full">
-                <label class="form-label">Notes</label>
-                <textarea class="form-textarea" id="f-notes">${escapeHtml(session?.notes||'')}</textarea>
-              </div>
+              <div class="form-field"><label class="form-label">Start Time</label><input type="time" class="form-input" id="f-start" value="${session.startTime||''}" /></div>
+              <div class="form-field"><label class="form-label">End Time</label><input type="time" class="form-input" id="f-end" value="${session.endTime||''}" /></div>
+              <div class="form-field full"><label class="form-label">Topic</label><input type="text" class="form-input" id="f-topic" value="${escapeHtml(session.topic||'')}" /></div>
+              <div class="form-field"><label class="form-label">Primary Instructor</label><input type="text" class="form-input" id="f-primary" value="${escapeHtml(session.primaryInstructor||'')}" /></div>
+              <div class="form-field"><label class="form-label">Secondary Instructor</label><input type="text" class="form-input" id="f-secondary" value="${escapeHtml(session.secondaryInstructor||'')}" /></div>
+              <div class="form-field full"><label class="form-label">Finalized Instructor(s)</label><input type="text" class="form-input" id="f-finalized" value="${escapeHtml(session.finalizedInstructors||'')}" /></div>
+              <div class="form-field full"><label class="form-label">Notes</label><textarea class="form-textarea" id="f-notes">${escapeHtml(session.notes||'')}</textarea></div>
             </div>
-            </fieldset>
           </form>
-          ${isEdit ? `<div class="history-toggle" id="history-toggle">View version history</div><div class="history-panel" id="history-panel"></div>` : ''}
+          <div class="history-toggle" id="history-toggle">View version history</div><div class="history-panel" id="history-panel"></div>
         </div>
         <div class="modal-footer">
-          <div style="display:flex;align-items:center;gap:10px">
-            ${isEdit && !readOnly ? `<button class="btn-danger-text" id="delete-btn">Delete session</button>` : ''}
-          </div>
+          <button class="btn-danger-text" id="delete-btn">Delete session</button>
           <div style="display:flex;align-items:center;gap:12px">
             <span class="save-status" id="save-status"></span>
-            <button class="btn btn-secondary" id="cancel-btn">${readOnly ? 'Close' : 'Cancel'}</button>
-            ${readOnly ? '' : `<button class="btn btn-primary" id="save-btn">${isEdit ? 'Save Changes' : 'Submit'}</button>`}
+            <button class="btn btn-secondary" id="cancel-btn">Cancel</button>
+            <button class="btn btn-primary" id="save-btn">Save Changes</button>
           </div>
         </div>
       </div>`;
-
     modal.classList.add('open');
     document.getElementById('modal-close').onclick = closeForm;
     document.getElementById('modal-backdrop').onclick = closeForm;
     document.getElementById('cancel-btn').onclick = closeForm;
-    if (!readOnly) {
-      document.getElementById('save-btn').onclick = () => saveSession(session, dateStr, day);
-    }
-    if (isEdit) {
-      if (!readOnly) document.getElementById('delete-btn').onclick = () => deleteSession(session);
-      document.getElementById('history-toggle').onclick = () => loadHistory(session.id);
-    }
-
-    if (!readOnly) {
-      document.getElementById('f-year').addEventListener('change', e => {
-        const year = e.target.value;
-        const courseSel = document.getElementById('f-course');
-        const hint = document.getElementById('course-hint');
-        if (!year) {
-          courseSel.innerHTML = `<option value="">Select Year first…</option>`;
-          courseSel.disabled = true;
-          hint.textContent = 'Select a Year above to see its courses';
-        } else {
-          courseSel.innerHTML = buildCourseOptionsHtml(year, null);
-          courseSel.disabled = false;
-          hint.textContent = '';
-        }
-      });
-    }
-  }
-
-  function closeForm() {
-    const modal = document.getElementById('modal');
-    modal.classList.remove('open'); modal.innerHTML = '';
+    document.getElementById('save-btn').onclick = () => saveSession(session);
+    document.getElementById('delete-btn').onclick = () => deleteSession(session);
+    document.getElementById('history-toggle').onclick = () => loadHistory(session.id);
+    document.getElementById('f-year').addEventListener('change', e => {
+      document.getElementById('f-course').innerHTML = buildCourseOptionsHtml(e.target.value, null);
+    });
   }
 
   const FIELD_LABELS = {
-    week: 'Week', dateRange: 'Date Range', academicCycle: 'Academic Cycle',
-    date: 'Date', day: 'Day', year: 'Year', startTime: 'Start Time', endTime: 'End Time',
-    course: 'Course', courseName: 'Course Name', courseDept: 'Department',
-    type: 'Type', topic: 'Topic', numInstructors: '# of Instructors',
-    instructorProposed: 'Instructor Proposed', primaryInstructor: 'Primary Instructor',
-    secondaryInstructor: 'Secondary Instructor', finalizedInstructors: 'Finalized Instructors',
-    notes: 'Notes',
+    year: 'Year', startTime: 'Start Time', endTime: 'End Time', course: 'Course',
+    courseName: 'Course Name', type: 'Type', topic: 'Topic',
+    primaryInstructor: 'Primary Instructor', secondaryInstructor: 'Secondary Instructor',
+    finalizedInstructors: 'Finalized Instructors', notes: 'Notes',
   };
-
   function detectChanges(oldData, newData) {
     const changes = [];
     Object.keys(FIELD_LABELS).forEach(key => {
-      const oldVal = oldData?.[key] ?? '';
-      const newVal = newData?.[key] ?? '';
-      if (String(oldVal) !== String(newVal)) {
-        changes.push({ field: key, fieldLabel: FIELD_LABELS[key], oldValue: String(oldVal), newValue: String(newVal) });
-      }
+      const oldVal = oldData?.[key] ?? '', newVal = newData?.[key] ?? '';
+      if (String(oldVal) !== String(newVal)) changes.push({ field: key, fieldLabel: FIELD_LABELS[key], oldValue: String(oldVal), newValue: String(newVal) });
     });
     return changes;
   }
-
-  async function logChanges(sessionId, courseLabel, changes) {
+  async function logChanges(sessionId, courseLabel, changes, sessionYear, sessionWeek) {
     if (!changes.length) return;
-    const batch = changes.map(c =>
-      db.collection(CHANGELOG_COL).add({
-        sessionId,
-        course: courseLabel,
-        fieldChanged: c.fieldLabel,
-        oldValue: c.oldValue,
-        newValue: c.newValue,
-        changedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      })
-    );
-    await Promise.all(batch);
+    await Promise.all(changes.map(c => db.collection(CHANGELOG_COL).add({
+      sessionId, course: courseLabel, sessionYear, sessionWeek,
+      fieldChanged: c.fieldLabel, oldValue: c.oldValue, newValue: c.newValue,
+      changedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    })));
   }
 
-  async function saveSession(existing, dateStr, day) {
+  async function saveSession(existing) {
     const statusEl = document.getElementById('save-status');
     const saveBtn = document.getElementById('save-btn');
-    const year   = document.getElementById('f-year').value;
     const courseCode = document.getElementById('f-course').value;
-    const type   = document.getElementById('f-type').value;
-    const start  = document.getElementById('f-start').value;
-
-    if (!year || !courseCode || !type || !start) {
-      statusEl.className = 'save-status error'; statusEl.textContent = 'Please fill required fields (Year, Course, Type, Start Time)';
-      return;
-    }
-
     const courseInfo = CourseData.findCourse(courseCode);
 
     const data = {
-      week: parseInt(document.getElementById('f-week').value) || null,
-      year: year,
-      date: dateStr, day: day,
-      dateRange: calcDateRange(dateStr),
-      academicCycle: getAcademicCycleLabel(dateStr),
-      startTime: start,
-      endTime: document.getElementById('f-end').value || '',
+      ...existing,
+      year: document.getElementById('f-year').value,
+      type: document.getElementById('f-type').value,
       course: courseCode,
-      courseName: courseInfo ? courseInfo.name : '',
-      courseDept: courseInfo ? courseInfo.dept : '',
-      type: type,
+      courseName: courseInfo ? courseInfo.name : existing.courseName,
+      courseDept: courseInfo ? courseInfo.dept : existing.courseDept,
+      startTime: document.getElementById('f-start').value,
+      endTime: document.getElementById('f-end').value,
       topic: document.getElementById('f-topic').value.trim(),
-      numInstructors: parseInt(document.getElementById('f-numinstr').value) || null,
-      instructorProposed: document.getElementById('f-instrproposed').value.trim(),
       primaryInstructor: document.getElementById('f-primary').value.trim(),
       secondaryInstructor: document.getElementById('f-secondary').value.trim(),
       finalizedInstructors: document.getElementById('f-finalized').value.trim(),
       notes: document.getElementById('f-notes').value.trim(),
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     };
+    delete data.id;
 
     saveBtn.disabled = true;
     statusEl.className = 'save-status saving'; statusEl.textContent = 'Saving…';
-
     try {
-      let docId = existing?.id;
-      if (docId) {
-        await db.collection(SESSIONS_COL).doc(docId).set(data, { merge: true });
-      } else {
-        const ref = await db.collection(SESSIONS_COL).add({ ...data, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
-        docId = ref.id;
-      }
-      await db.collection(HISTORY_COL).add({ sessionId: docId, ...data, savedAt: firebase.firestore.FieldValue.serverTimestamp() });
-
-      // Detect what changed and log it in a clean, readable changelog
-      const courseLabel = `${data.course} - ${data.courseName || ''}`;
-      const changes = existing ? detectChanges(existing, data) : detectChanges({}, data);
-      await logChanges(docId, courseLabel, changes);
-
+      await db.collection(SESSIONS_COL).doc(existing.id).set(data, { merge: true });
+      await db.collection(HISTORY_COL).add({ sessionId: existing.id, ...data, savedAt: firebase.firestore.FieldValue.serverTimestamp() });
+      const changes = detectChanges(existing, data);
+      await logChanges(existing.id, `${data.course} - ${data.courseName||''}`, changes, data.year, data.week);
       statusEl.className = 'save-status success'; statusEl.textContent = 'Saved ✓';
-      showToast(existing ? 'Session updated' : 'Session submitted');
+      showToast('Session updated');
       setTimeout(closeForm, 500);
     } catch (err) {
       console.error('[Save error]', err);
@@ -653,222 +660,91 @@
   }
 
   async function deleteSession(session) {
-    if (!submissionsOpen && !isAdmin) { showToast('Timetable submissions are currently closed', true); return; }
     if (!confirm('Delete this session? This cannot be undone (history will still record it existed).')) return;
-    try {
-      await db.collection(SESSIONS_COL).doc(session.id).delete();
-      showToast('Session deleted'); closeForm();
-    } catch (err) {
-      console.error('[Delete error]', err);
-      showToast('Could not delete — try again', true);
-    }
+    try { await db.collection(SESSIONS_COL).doc(session.id).delete(); showToast('Session deleted'); closeForm(); }
+    catch (err) { console.error('[Delete error]', err); showToast('Could not delete — try again', true); }
   }
 
   async function loadHistory(sessionId) {
     const panel = document.getElementById('history-panel');
-    const isOpen = panel.classList.contains('open');
-    if (isOpen) { panel.classList.remove('open'); return; }
-
+    if (panel.classList.contains('open')) { panel.classList.remove('open'); return; }
     panel.innerHTML = '<div style="font-size:11px;color:var(--text-3)">Loading…</div>';
     panel.classList.add('open');
-
     try {
       const snap = await db.collection(HISTORY_COL).where('sessionId','==',sessionId).orderBy('savedAt','desc').limit(20).get();
       if (snap.empty) { panel.innerHTML = '<div style="font-size:11px;color:var(--text-3)">No history yet</div>'; return; }
-
       panel.innerHTML = snap.docs.map(doc => {
         const v = doc.data();
         const when = v.savedAt?.toDate ? v.savedAt.toDate().toLocaleString('en-CA',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
-        return `<div class="history-item" data-vid="${doc.id}">
-          <span>${when} — ${escapeHtml(v.primaryInstructor||v.instructorProposed||'no instructor')} · ${escapeHtml(v.topic||'no topic')}</span>
-          <span class="history-restore">Restore</span>
-        </div>`;
+        return `<div class="history-item" data-vid="${doc.id}"><span>${when} — ${escapeHtml(v.topic||'no topic')}</span><span class="history-restore">Restore</span></div>`;
       }).join('');
-
       panel.querySelectorAll('.history-item').forEach(item => {
         item.addEventListener('click', async () => {
           const vDoc = await db.collection(HISTORY_COL).doc(item.dataset.vid).get();
-          const v = vDoc.data();
-          if (!v) return;
+          const v = vDoc.data(); if (!v) return;
           if (!confirm('Restore this version? This will overwrite the current session data.')) return;
           const { sessionId: sid, savedAt, ...patch } = v;
           await db.collection(SESSIONS_COL).doc(sid).set(patch, { merge: true });
           showToast('Version restored'); closeForm();
         });
       });
-    } catch (err) {
-      console.error('[History error]', err);
-      panel.innerHTML = '<div style="font-size:11px;color:var(--danger)">Could not load history</div>';
-    }
+    } catch (err) { console.error('[History error]', err); panel.innerHTML = '<div style="font-size:11px;color:var(--danger)">Could not load history</div>'; }
   }
-
-  // ════════════════════════════════════════════════════════════
-  // EXPORT MASTER CSV
-  // ════════════════════════════════════════════════════════════
-  function exportCSV() {
-    if (!allSessions.length) { showToast('No sessions to export yet', true); return; }
-    const headers = ['Week','Date Range','Academic Cycle','Date','Day','Year','Start Time','End Time','Course','Course Name','Type','Topic','# of Instructors','Instructor Proposed','Primary Instructor','Secondary Instructor','Finalized Instructors','Notes'];
-    const rows = allSessions
-      .sort((a,b) => (a.date||'').localeCompare(b.date||'') || (a.startTime||'').localeCompare(b.startTime||''))
-      .map(s => [
-        s.week||'', s.dateRange||'', s.academicCycle||'', s.date||'', s.day||'', s.year||'', s.startTime||'', s.endTime||'',
-        `"${(s.course||'').replace(/"/g,'""')}"`,
-        `"${(s.courseName||'').replace(/"/g,'""')}"`,
-        s.type||'',
-        `"${(s.topic||'').replace(/"/g,'""')}"`, s.numInstructors||'',
-        `"${(s.instructorProposed||'').replace(/"/g,'""')}"`,
-        `"${(s.primaryInstructor||'').replace(/"/g,'""')}"`,
-        `"${(s.secondaryInstructor||'').replace(/"/g,'""')}"`,
-        `"${(s.finalizedInstructors||'').replace(/"/g,'""')}"`,
-        `"${(s.notes||'').replace(/"/g,'""')}"`,
-      ]);
-    const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `ucvm_timetable_master_${dateKey(new Date())}.csv`; a.click();
-    URL.revokeObjectURL(url);
-    showToast('Master list exported');
-  }
-  document.getElementById('export-btn').addEventListener('click', exportCSV);
-  document.getElementById('export-btn-2').addEventListener('click', exportCSV);
 
   // ════════════════════════════════════════════════════════════
   // ADMIN MODE
   // ════════════════════════════════════════════════════════════
   const ADMIN_PASSWORD = 'Changes26'; // ← change this to update the admin password
   let isAdmin = sessionStorage.getItem('timetable_admin') === '1';
-  let submissionsOpen = true; // default until Firestore tells us otherwise
 
   function updateAdminUI() {
     const btn = document.getElementById('admin-toggle');
     btn.style.opacity = isAdmin ? '1' : '.35';
-    btn.title = isAdmin ? 'Admin mode active (click to exit)' : '⚙';
     renderStatusBanner();
-    renderCalendar();
+    renderAll();
   }
-
   document.getElementById('admin-toggle').addEventListener('click', () => {
-    if (isAdmin) {
-      isAdmin = false;
-      sessionStorage.removeItem('timetable_admin');
-      showToast('Admin mode off');
-      updateAdminUI();
-      return;
-    }
+    if (isAdmin) { isAdmin = false; sessionStorage.removeItem('timetable_admin'); showToast('Admin mode off'); updateAdminUI(); return; }
     const entered = prompt('Enter admin password:');
-    if (entered === ADMIN_PASSWORD) {
-      isAdmin = true;
-      sessionStorage.setItem('timetable_admin', '1');
-      showToast('Admin mode on');
-      updateAdminUI();
-    } else if (entered !== null) {
-      showToast('Incorrect password', true);
-    }
+    if (entered === ADMIN_PASSWORD) { isAdmin = true; sessionStorage.setItem('timetable_admin', '1'); showToast('Admin mode on'); updateAdminUI(); }
+    else if (entered !== null) showToast('Incorrect password', true);
   });
 
-  // ── Global Submissions Open/Closed switch ───────────────────
-  // Stored as a single document in Firestore so it's shared live across everyone
-  const SETTINGS_DOC = db.collection('settings').doc('global');
-
-  SETTINGS_DOC.onSnapshot(
-    doc => {
-      submissionsOpen = doc.exists ? (doc.data().submissionsOpen !== false) : true;
-      renderStatusBanner();
-      renderCalendar();
-    },
-    err => console.error('[Settings listener]', err)
-  );
-
-  async function toggleSubmissionsOpen() {
-    if (!isAdmin) return;
-    try {
-      await SETTINGS_DOC.set({ submissionsOpen: !submissionsOpen }, { merge: true });
-      showToast(!submissionsOpen ? 'Submissions opened for everyone' : 'Submissions closed for everyone');
-    } catch (err) {
-      console.error('[Settings update error]', err);
-      showToast('Could not update submission status', true);
-    }
-  }
-
   function renderStatusBanner() {
-    const existing = document.getElementById('submission-status-banner');
-    if (existing) existing.remove();
-
+    const existing = document.getElementById('admin-banner'); if (existing) existing.remove();
+    if (!isAdmin) return;
     const banner = document.createElement('div');
-    banner.id = 'submission-status-banner';
-    banner.style.cssText = `
-      display:flex; align-items:center; justify-content:space-between; gap:10px;
-      padding:9px 16px; border-radius:8px; margin-bottom:12px; font-size:12.5px;
-      border:1px solid; ${submissionsOpen
-        ? 'background:#EFF6FF;border-color:#BFDBFE;color:#1E40AF;'
-        : 'background:#FEF2F2;border-color:#FECACA;color:#B91C1C;'}
-    `;
-    banner.innerHTML = `
-      <span>${submissionsOpen
-        ? '🟢 <strong>Submissions are open</strong> — faculty can add or edit sessions.'
-        : '🔒 <strong>Submissions are closed</strong> — the timetable is locked for the term. Contact the admin for last-minute changes.'}</span>
-      <span style="display:flex;gap:8px;flex-shrink:0">
-        ${isAdmin ? `<button id="import-csv-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>` : ''}
-        ${isAdmin ? `<button id="toggle-submissions-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">${submissionsOpen ? 'Close Submissions' : 'Open Submissions'}</button>` : ''}
-      </span>
-    `;
-
-    const intro = document.querySelector('.page-intro');
-    intro.parentNode.insertBefore(banner, intro);
-
-    if (isAdmin) {
-      document.getElementById('toggle-submissions-btn').addEventListener('click', toggleSubmissionsOpen);
-      document.getElementById('import-csv-btn').addEventListener('click', openImportModal);
-    }
+    banner.id = 'admin-banner';
+    banner.style.cssText = `display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 16px;border-radius:8px;margin-bottom:12px;font-size:12.5px;border:1px solid #BFDBFE;background:#EFF6FF;color:#1E40AF;`;
+    banner.innerHTML = `<span>⚙ <strong>Admin mode active</strong> — click any session to view and edit it.</span>
+      <button id="import-csv-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>`;
+    const toolbar = document.querySelector('.cal-toolbar');
+    toolbar.parentNode.insertBefore(banner, toolbar);
+    document.getElementById('import-csv-btn').addEventListener('click', openImportModal);
   }
 
   // ════════════════════════════════════════════════════════════
   // CSV BULK IMPORT (admin only)
   // ════════════════════════════════════════════════════════════
-
-  // Maps possible CSV header variants → our internal field names.
-  // Add more variants here if your CSV uses different column names.
   const CSV_FIELD_ALIASES = {
-    rowId:                ['row id', 'rowid', 'row #', 'session id'],
-    week:                 ['week', 'week #', 'week#'],
-    dateRange:            ['date range', 'daterange'],
-    academicCycle:        ['academic cycle', 'cycle'],
-    date:                 ['date'],
-    day:                  ['day'],
-    year:                 ['year', 'program year'],
-    startTime:            ['start time', 'starttime'],
-    endTime:              ['end time', 'endtime'],
-    course:               ['course', 'course code', 'course #'],
-    courseName:           ['course name'],
-    courseDept:           ['department', 'dept'],
-    type:                 ['type'],
-    topic:                ['topic'],
-    numInstructors:       ['# of instructors', 'num instructors', 'number of instructors'],
-    instructorProposed:   ['instructor proposed', 'proposed instructor'],
-    primaryInstructor:    ['primary instructor', 'primary instructor (lab)', 'primary instructor (lec/srl)'],
-    secondaryInstructor:  ['secondary instructor', 'secondary instructor (lab)'],
-    finalizedInstructors: ['finalized instructors', 'finalized instructor (lec/srl)', 'finalized instructor (lab)'],
-    notes:                ['notes'],
+    rowId: ['row id','rowid','row #','session id'], week: ['week','week #','week#'],
+    dateRange: ['date range','daterange'], academicCycle: ['academic cycle','cycle'],
+    date: ['date'], day: ['day'], year: ['year','program year'],
+    startTime: ['start time','starttime'], endTime: ['end time','endtime'],
+    course: ['course','course code','course #'], courseName: ['course name'], courseDept: ['department','dept'],
+    type: ['type'], topic: ['topic'],
+    numInstructors: ['# of instructors','num instructors','number of instructors'],
+    instructorProposed: ['instructor proposed','proposed instructor'],
+    primaryInstructor: ['primary instructor'], secondaryInstructor: ['secondary instructor'],
+    finalizedInstructors: ['finalized instructors'], notes: ['notes'],
   };
 
   function parseCSV(text) {
-    // Simple CSV parser that handles quoted fields with commas inside them
-    const rows = [];
-    let row = [], field = '', inQuotes = false;
+    const rows = []; let row = [], field = '', inQuotes = false;
     for (let i = 0; i < text.length; i++) {
       const c = text[i], next = text[i+1];
-      if (inQuotes) {
-        if (c === '"' && next === '"') { field += '"'; i++; }
-        else if (c === '"') { inQuotes = false; }
-        else { field += c; }
-      } else {
-        if (c === '"') inQuotes = true;
-        else if (c === ',') { row.push(field); field = ''; }
-        else if (c === '\r') { /* skip */ }
-        else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
-        else field += c;
-      }
+      if (inQuotes) { if (c === '"' && next === '"') { field += '"'; i++; } else if (c === '"') { inQuotes = false; } else { field += c; } }
+      else { if (c === '"') inQuotes = true; else if (c === ',') { row.push(field); field=''; } else if (c==='\r') {} else if (c==='\n') { row.push(field); rows.push(row); row=[]; field=''; } else field += c; }
     }
     if (field.length || row.length) { row.push(field); rows.push(row); }
     return rows.filter(r => r.length > 1 || r[0] !== '');
@@ -877,41 +753,25 @@
   function mapCsvToSessions(rows) {
     const headers = rows[0].map(h => h.trim().toLowerCase());
     const fieldForHeader = {};
-    headers.forEach((h, i) => {
-      for (const [field, aliases] of Object.entries(CSV_FIELD_ALIASES)) {
-        if (aliases.includes(h)) { fieldForHeader[i] = field; break; }
-      }
-    });
-
+    headers.forEach((h,i) => { for (const [f,aliases] of Object.entries(CSV_FIELD_ALIASES)) if (aliases.includes(h)) { fieldForHeader[i]=f; break; } });
     return rows.slice(1).map(cells => {
-      const session = {};
-      cells.forEach((val, i) => {
-        const field = fieldForHeader[i];
-        if (field) session[field] = (val || '').trim();
-      });
-      // Normalize date to YYYY-MM-DD if it isn't already
-      if (session.date) {
-        const d = new Date(session.date);
-        if (!isNaN(d.getTime()) && !/^\d{4}-\d{2}-\d{2}$/.test(session.date)) {
-          session.date = d.toISOString().slice(0,10);
-        }
+      const s = {};
+      cells.forEach((val,i) => { const f = fieldForHeader[i]; if (f) s[f] = (val||'').trim(); });
+      if (s.date) {
+        const d = new Date(s.date);
+        if (!isNaN(d.getTime()) && !/^\d{4}-\d{2}-\d{2}$/.test(s.date)) s.date = d.toISOString().slice(0,10);
       }
-      // Auto-fill anything missing from the date, same logic as the manual form
-      if (session.date) {
-        if (!session.day) session.day = calcDayName(session.date);
-        if (!session.week) session.week = calcAcademicWeekNumber(session.date);
-        if (!session.dateRange) session.dateRange = calcDateRange(session.date);
-        if (!session.academicCycle) session.academicCycle = getAcademicCycleLabel(session.date);
+      if (s.date) {
+        if (!s.day) s.day = calcDayName(s.date);
+        if (!s.week) s.week = calcAcademicWeekNumber(s.date);
+        if (!s.dateRange) s.dateRange = weekRangeLabel(calcAcademicWeekNumber(s.date));
+        if (!s.academicCycle) s.academicCycle = getAcademicCycleLabel(s.date);
       }
-      // Auto-fill courseName/courseDept from our course list if we recognize the course code
-      if (session.course) {
-        const info = CourseData.findCourse(session.course);
-        if (info) { session.courseName = info.name; session.courseDept = info.dept; }
-      }
-      if (session.numInstructors) session.numInstructors = parseInt(session.numInstructors) || null;
-      if (session.week) session.week = parseInt(session.week) || null;
-      return session;
-    }).filter(s => s.course && s.date); // skip rows missing the essentials
+      if (s.course) { const info = CourseData.findCourse(s.course); if (info) { s.courseName = info.name; s.courseDept = info.dept; } }
+      if (s.numInstructors) s.numInstructors = parseInt(s.numInstructors) || null;
+      if (s.week) s.week = parseInt(s.week) || null;
+      return s;
+    }).filter(s => s.course && s.date);
   }
 
   function openImportModal() {
@@ -921,18 +781,13 @@
       <div class="modal-box" style="width:min(720px,94vw)">
         <div class="modal-strip"></div>
         <button class="modal-close" id="modal-close">✕</button>
-        <div class="modal-header">
-          <div class="modal-title">⬆ Import Sessions from CSV</div>
-          <div class="modal-subtitle">Upload a CSV file — column names will be matched automatically. Missing fields (Day, Week, Date Range, Academic Cycle) are calculated from the date if not provided.</div>
-        </div>
+        <div class="modal-header"><div class="modal-title">⬆ Import Sessions from CSV</div>
+          <div class="modal-subtitle">Upload a CSV — columns are matched automatically.</div></div>
         <div class="modal-body">
-          <div class="form-field full">
-            <input type="file" accept=".csv" id="csv-file-input" class="form-input" />
-          </div>
+          <div class="form-field full"><input type="file" accept=".csv" id="csv-file-input" class="form-input" /></div>
           <div id="import-preview"></div>
         </div>
-        <div class="modal-footer">
-          <div></div>
+        <div class="modal-footer"><div></div>
           <div style="display:flex;align-items:center;gap:12px">
             <span class="save-status" id="import-status"></span>
             <button class="btn btn-secondary" id="import-cancel-btn">Cancel</button>
@@ -940,21 +795,17 @@
           </div>
         </div>
       </div>`;
-
     modal.classList.add('open');
     document.getElementById('modal-close').onclick = closeForm;
     document.getElementById('modal-backdrop').onclick = closeForm;
     document.getElementById('import-cancel-btn').onclick = closeForm;
 
     let parsedSessions = [];
-
     document.getElementById('csv-file-input').addEventListener('change', e => {
-      const file = e.target.files[0];
-      if (!file) return;
+      const file = e.target.files[0]; if (!file) return;
       const reader = new FileReader();
       reader.onload = ev => {
-        const rows = parseCSV(ev.target.result);
-        parsedSessions = mapCsvToSessions(rows);
+        parsedSessions = mapCsvToSessions(parseCSV(ev.target.result));
         renderImportPreview(parsedSessions);
         document.getElementById('import-confirm-btn').disabled = parsedSessions.length === 0;
       };
@@ -963,55 +814,26 @@
 
     function renderImportPreview(sessions) {
       const el = document.getElementById('import-preview');
-      if (!sessions.length) {
-        el.innerHTML = `<div style="padding:14px;text-align:center;color:var(--danger);font-size:12.5px">No valid rows found — make sure the CSV has a Course and Date column.</div>`;
-        return;
-      }
+      if (!sessions.length) { el.innerHTML = `<div style="padding:14px;text-align:center;color:var(--danger);font-size:12.5px">No valid rows found.</div>`; return; }
       const preview = sessions.slice(0, 8);
-      el.innerHTML = `
-        <div style="font-size:12px;color:var(--text-3);margin:8px 0">Found <strong>${sessions.length}</strong> rows. Preview (first ${preview.length}):</div>
+      el.innerHTML = `<div style="font-size:12px;color:var(--text-3);margin:8px 0">Found <strong>${sessions.length}</strong> rows. Preview:</div>
         <div style="overflow-x:auto;max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:6px">
-          <table style="width:100%;border-collapse:collapse;font-size:11.5px">
-            <thead><tr style="background:var(--surface-2)">
-              <th style="padding:6px 8px;text-align:left">Week</th>
-              <th style="padding:6px 8px;text-align:left">Date</th>
-              <th style="padding:6px 8px;text-align:left">Course</th>
-              <th style="padding:6px 8px;text-align:left">Type</th>
-              <th style="padding:6px 8px;text-align:left">Topic</th>
-              <th style="padding:6px 8px;text-align:left">Instructor</th>
-            </tr></thead>
-            <tbody>
-              ${preview.map(s => `<tr style="border-top:1px solid var(--border)">
-                <td style="padding:6px 8px">${escapeHtml(String(s.week||''))}</td>
-                <td style="padding:6px 8px">${escapeHtml(s.date||'')}</td>
-                <td style="padding:6px 8px">${escapeHtml(s.course||'')}</td>
-                <td style="padding:6px 8px">${escapeHtml(s.type||'')}</td>
-                <td style="padding:6px 8px">${escapeHtml((s.topic||'').slice(0,30))}</td>
-                <td style="padding:6px 8px">${escapeHtml(s.primaryInstructor||s.instructorProposed||'')}</td>
-              </tr>`).join('')}
-            </tbody>
-          </table>
-        </div>`;
+          <table class="import-preview-table" style="width:100%;border-collapse:collapse">
+            <thead><tr style="background:var(--surface-2)"><th>Week</th><th>Date</th><th>Course</th><th>Type</th><th>Topic</th></tr></thead>
+            <tbody>${preview.map(s => `<tr style="border-top:1px solid var(--border)">
+              <td>${escapeHtml(String(s.week||''))}</td><td>${escapeHtml(s.date||'')}</td><td>${escapeHtml(s.course||'')}</td>
+              <td>${escapeHtml(s.type||'')}</td><td>${escapeHtml((s.topic||'').slice(0,30))}</td></tr>`).join('')}</tbody>
+          </table></div>`;
     }
 
     document.getElementById('import-confirm-btn').onclick = async () => {
       const statusEl = document.getElementById('import-status');
       const btn = document.getElementById('import-confirm-btn');
-      btn.disabled = true;
-      statusEl.className = 'save-status saving';
-
-      // Batched writes: each batch bundles up to 200 rows (400 Firestore ops,
-      // safely under the 500-op batch limit) into a single network round-trip.
-      // This is dramatically faster and more resilient than writing row-by-row —
-      // if connectivity drops, at most one batch is lost instead of everything
-      // after the interruption point.
-      const BATCH_SIZE = 200;
-      let imported = 0, failed = 0;
-
+      btn.disabled = true; statusEl.className = 'save-status saving';
+      const BATCH_SIZE = 200; let imported = 0, failed = 0;
       for (let i = 0; i < parsedSessions.length; i += BATCH_SIZE) {
         const chunk = parsedSessions.slice(i, i + BATCH_SIZE);
-        statusEl.textContent = `Importing ${Math.min(i + BATCH_SIZE, parsedSessions.length)} of ${parsedSessions.length}…`;
-
+        statusEl.textContent = `Importing ${Math.min(i+BATCH_SIZE, parsedSessions.length)} of ${parsedSessions.length}…`;
         const batch = db.batch();
         chunk.forEach(session => {
           const sessionRef = db.collection(SESSIONS_COL).doc();
@@ -1020,29 +842,73 @@
           const historyRef = db.collection(HISTORY_COL).doc();
           batch.set(historyRef, { sessionId: sessionRef.id, ...data, savedAt: firebase.firestore.FieldValue.serverTimestamp() });
         });
-
-        try {
-          await batch.commit();
-          imported += chunk.length;
-        } catch (err) {
-          console.error('[Batch import error]', err, 'rows', i, '-', i + chunk.length);
-          failed += chunk.length;
-        }
+        try { await batch.commit(); imported += chunk.length; }
+        catch (err) { console.error('[Batch import error]', err); failed += chunk.length; }
       }
-
-      if (failed === 0) {
-        statusEl.className = 'save-status success';
-        statusEl.textContent = `Imported ${imported} of ${parsedSessions.length} ✓`;
-        showToast(`${imported} sessions imported`);
-        setTimeout(closeForm, 1200);
-      } else {
-        statusEl.className = 'save-status error';
-        statusEl.textContent = `Imported ${imported}, ${failed} failed — check console (F12) and retry`;
-        showToast(`${failed} rows failed to import`, true);
-        btn.disabled = false;
-      }
+      if (failed === 0) { statusEl.className='save-status success'; statusEl.textContent=`Imported ${imported} of ${parsedSessions.length} ✓`; showToast(`${imported} sessions imported`); setTimeout(closeForm, 1200); }
+      else { statusEl.className='save-status error'; statusEl.textContent=`Imported ${imported}, ${failed} failed — check console`; showToast(`${failed} rows failed`, true); btn.disabled=false; }
     };
   }
+
+  // ════════════════════════════════════════════════════════════
+  // EXPORTS — Master (Excel/CSV/ICS), Filtered (Excel/CSV/ICS/PDF), View (PDF)
+  // ════════════════════════════════════════════════════════════
+  const EXPORT_HEADERS = ['Week','Date Range','Date','Day','Year','Start Time','End Time','Course','Course Name','Type','Topic','Room','Primary Instructor','Secondary Instructor','Finalized Instructors','Notes'];
+  function sessionToRow(s) {
+    return [s.week||'', s.dateRange||'', s.date||'', s.day||'', s.year||'', s.startTime||'', s.endTime||'', s.course||'', s.courseName||'', s.type||'', s.topic||'', getRoom(s), s.primaryInstructor||'', s.secondaryInstructor||'', s.finalizedInstructors||'', s.notes||''];
+  }
+  function sortedRows(data) { return [...data].sort((a,b) => (a.date||'').localeCompare(b.date||'') || (a.startTime||'').localeCompare(b.startTime||'')); }
+
+  function exportCSV(data, filename) {
+    const rows = sortedRows(data).map(sessionToRow);
+    const csv = [EXPORT_HEADERS, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    downloadBlob(csv, filename, 'text/csv');
+  }
+  function exportXLSX(data, filename) {
+    const rows = sortedRows(data).map(sessionToRow);
+    const ws = XLSX.utils.aoa_to_sheet([EXPORT_HEADERS, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Timetable');
+    XLSX.writeFile(wb, filename);
+  }
+  function exportICS(data, filename) {
+    const lines = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//UCVM Timetable//EN'];
+    sortedRows(data).forEach(s => {
+      if (!s.date || !s.startTime) return;
+      const dStart = s.date.replace(/-/g,'') + 'T' + s.startTime.replace(':','') + '00';
+      const dEnd = s.date.replace(/-/g,'') + 'T' + (s.endTime||s.startTime).replace(':','') + '00';
+      lines.push('BEGIN:VEVENT',
+        `UID:${s.id||Math.random()}@ucvm-timetable`,
+        `DTSTART:${dStart}`, `DTEND:${dEnd}`,
+        `SUMMARY:${(s.course||'')} ${(s.type||'')} - ${(s.topic||'')}`.replace(/\r?\n/g,' '),
+        `LOCATION:${getRoom(s)}`,
+        `DESCRIPTION:${getInstructorDisplay(s)}`.replace(/\r?\n/g,' '),
+        'END:VEVENT');
+    });
+    lines.push('END:VCALENDAR');
+    downloadBlob(lines.join('\r\n'), filename, 'text/calendar');
+  }
+  function downloadBlob(content, filename, mime) {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  document.querySelectorAll('.export-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const kind = btn.dataset.export;
+      const today = dateKey(new Date());
+      if (kind === 'master-xlsx') exportXLSX(allSessions, `ucvm_timetable_master_${today}.xlsx`);
+      if (kind === 'master-csv')  exportCSV(allSessions, `ucvm_timetable_master_${today}.csv`);
+      if (kind === 'master-ics')  exportICS(allSessions, `ucvm_timetable_master_${today}.ics`);
+      if (kind === 'filtered-xlsx') exportXLSX(getFiltered(), `ucvm_timetable_filtered_${today}.xlsx`);
+      if (kind === 'filtered-csv')  exportCSV(getFiltered(), `ucvm_timetable_filtered_${today}.csv`);
+      if (kind === 'filtered-ics')  exportICS(getFiltered(), `ucvm_timetable_filtered_${today}.ics`);
+      if (kind === 'view-pdf' || kind === 'filtered-pdf') window.print();
+      if (!['view-pdf','filtered-pdf'].includes(kind)) showToast('Export downloaded');
+    });
+  });
 
   // ════════════════════════════════════════════════════════════
   // DARK MODE
@@ -1062,14 +928,13 @@
   // ════════════════════════════════════════════════════════════
   function showToast(msg, isError) {
     const t = document.getElementById('toast');
-    t.textContent = msg;
-    t.className = 'toast show' + (isError ? ' error' : '');
+    t.textContent = msg; t.className = 'toast show' + (isError ? ' error' : '');
     setTimeout(() => { t.className = 'toast' + (isError ? ' error' : ''); }, 2600);
   }
 
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeForm(); });
 
-  // Initial render — populate course filter and render calendar while waiting for first snapshot
+  // Initial render
   populateCourseFilterFromYear('all');
   document.getElementById('admin-toggle').style.opacity = isAdmin ? '1' : '.35';
   renderStatusBanner();
