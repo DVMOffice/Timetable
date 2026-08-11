@@ -1,5 +1,5 @@
-// courseData.js — Pre-loaded course list, organized by program Year
-// Used to populate the dependent Year → Course dropdown in the submission form.
+// courseData.js — Pre-loaded course list, organized by program Year,
+// plus the room-assignment lookup used to display Room on each session block.
 
 const CourseData = (() => {
 
@@ -64,7 +64,21 @@ const CourseData = (() => {
     return null;
   }
 
-  return { COURSES, getCoursesForYear, getAllCourses, findCourse, getYearForCourse };
+  // ── Room assignment ──────────────────────────────────────────
+  // 1. Course 202, 302, or 508 → always CSB101, regardless of type
+  // 2. Any other Lab-type session → CSB Wards
+  // 3. Everything else → year default (VLC207 / VLC213 / VLC219)
+  const CSB101_COURSES = ['202', '302', '508'];
+  const YEAR_DEFAULT_ROOM = { '1': 'VLC207', '2': 'VLC213', '3': 'VLC219' };
+
+  function getRoom(session) {
+    const course = String(session.course || '').trim();
+    if (CSB101_COURSES.includes(course)) return 'CSB101';
+    if (String(session.type || '').toUpperCase() === 'LAB') return 'CSB Wards';
+    return YEAR_DEFAULT_ROOM[String(session.year)] || '';
+  }
+
+  return { COURSES, getCoursesForYear, getAllCourses, findCourse, getYearForCourse, getRoom };
 })();
 
 window.CourseData = CourseData;
