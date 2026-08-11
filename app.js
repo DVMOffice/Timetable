@@ -1000,23 +1000,47 @@
       btn.disabled = true;
       statusEl.className = 'save-status saving';
 
-      let done = 0;
-      for (const session of parsedSessions) {
-        statusEl.textContent = `Importing ${done+1} of ${parsedSessions.length}…`;
+      // Batched writes: each batch bundles up to 200 rows (400 Firestore ops,
+      // safely under the 500-op batch limit) into a single network round-trip.
+      // This is dramatically faster and more resilient than writing row-by-row —
+      // if connectivity drops, at most one batch is lost instead of everything
+      // after the interruption point.
+      const BATCH_SIZE = 200;
+      let imported = 0, failed = 0;
+
+      for (let i = 0; i < parsedSessions.length; i += BATCH_SIZE) {
+        const chunk = parsedSessions.slice(i, i + BATCH_SIZE);
+        statusEl.textContent = `Importing ${Math.min(i + BATCH_SIZE, parsedSessions.length)} of ${parsedSessions.length}…`;
+
+        const batch = db.batch();
+        chunk.forEach(session => {
+          const sessionRef = db.collection(SESSIONS_COL).doc();
+          const data = { ...session, createdAt: firebase.firestore.FieldValue.serverTimestamp(), updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
+          batch.set(sessionRef, data);
+          const historyRef = db.collection(HISTORY_COL).doc();
+          batch.set(historyRef, { sessionId: sessionRef.id, ...data, savedAt: firebase.firestore.FieldValue.serverTimestamp() });
+        });
+
         try {
-          const data = { ...session, updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
-          const ref = await db.collection(SESSIONS_COL).add({ ...data, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
-          await db.collection(HISTORY_COL).add({ sessionId: ref.id, ...data, savedAt: firebase.firestore.FieldValue.serverTimestamp() });
-          done++;
+          await batch.commit();
+          imported += chunk.length;
         } catch (err) {
-          console.error('[Import row error]', err, session);
+          console.error('[Batch import error]', err, 'rows', i, '-', i + chunk.length);
+          failed += chunk.length;
         }
       }
 
-      statusEl.className = 'save-status success';
-      statusEl.textContent = `Imported ${done} of ${parsedSessions.length} ✓`;
-      showToast(`${done} sessions imported`);
-      setTimeout(closeForm, 1200);
+      if (failed === 0) {
+        statusEl.className = 'save-status success';
+        statusEl.textContent = `Imported ${imported} of ${parsedSessions.length} ✓`;
+        showToast(`${imported} sessions imported`);
+        setTimeout(closeForm, 1200);
+      } else {
+        statusEl.className = 'save-status error';
+        statusEl.textContent = `Imported ${imported}, ${failed} failed — check console (F12) and retry`;
+        showToast(`${failed} rows failed to import`, true);
+        btn.disabled = false;
+      }
     };
   }
 
