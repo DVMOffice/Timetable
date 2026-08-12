@@ -94,11 +94,11 @@ const CalendarEngine = (() => {
     return date.toLocaleDateString('en-CA', { month: 'long', year: 'numeric' });
   }
 
-  // "‹ Week X – Aug 24 - Aug 28, 2026 ›" header, built from the days array
+  // "Week X : Sep 21-25, 2026" header, built from the days array
   function weekHeaderLabel(days, weekNum) {
     const first = days[0], last = days[days.length-1];
     const year = last.getFullYear();
-    return `Week ${weekNum} – ${fmtMonthDay(first)} – ${fmtMonthDay(last)}, ${year}`;
+    return `Week ${weekNum} : ${fmtMonthDay(first)} – ${fmtMonthDay(last)}, ${year}`;
   }
 
   // ── Month dropdown order: Aug 2026 → Apr 2027 ──────────────────
