@@ -474,6 +474,30 @@
       .sort((a,b) => a.start - b.start);
   }
 
+  // Different start-time buckets can still genuinely overlap in real time
+  // (e.g. a Year 2 session 10:30–11:30 and a Year 3 session 10:45–12:15,
+  // especially common in the "All Years" view). Give each such bucket its
+  // own side-by-side lane instead of letting them paint on top of each other.
+  function assignLanes(clusters) {
+    const groups = [];
+    let current = null;
+    clusters.forEach(c => {
+      if (current && c.start < current.maxEnd) { current.items.push(c); current.maxEnd = Math.max(current.maxEnd, c.end); }
+      else { current = { items: [c], maxEnd: c.end }; groups.push(current); }
+    });
+    groups.forEach(g => {
+      const laneEnds = [];
+      g.items.forEach(c => {
+        let lane = laneEnds.findIndex(end => end <= c.start);
+        if (lane === -1) { lane = laneEnds.length; laneEnds.push(c.end); } else { laneEnds[lane] = c.end; }
+        c.lane = lane;
+      });
+      const laneCount = laneEnds.length;
+      g.items.forEach(c => c.laneCount = laneCount);
+    });
+    return clusters;
+  }
+
   function renderWeekView(container, days, data) {
     const weekEvents = data.filter(s => days.some(d => dateKey(d) === s.date));
     const timeline = buildWeekTimeline(days, weekEvents);
@@ -497,19 +521,22 @@
         if (en <= st) en = st + 5;
         return { ...s, _start: st, _end: en };
       });
-      const clusters = bucketEventsByStartTime(events);
+      const clusters = assignLanes(bucketEventsByStartTime(events));
 
       html += `<div class="tg-day-col ${isTd?'today-col':''}"><div class="tg-track">`;
       html += timeline.hourMarks.map(m => `<div class="tg-gridline" style="top:${timeline.toPct(m)}%"></div>`).join('');
 
       clusters.forEach(cluster => {
         const topPct = timeline.toPct(cluster.start), heightPct = Math.max(timeline.toPct(cluster.end) - topPct, 2);
+        const laneCount = cluster.laneCount || 1, lane = cluster.lane || 0;
+        const laneWidth = 100 / laneCount;
+        const posStyle = `top:${topPct}%;height:${heightPct}%;left:calc(${lane*laneWidth}% + 2px);width:calc(${laneWidth}% - 4px)`;
         if (cluster.items.length === 1) {
           const s = cluster.items[0];
           const color = colorsOn ? getCourseColor(s.course) : null;
           const style = colorsOn
-            ? `top:${topPct}%;height:${heightPct}%;background:${color.bg};border-left-color:${color.border}`
-            : `top:${topPct}%;height:${heightPct}%`;
+            ? `${posStyle};background:${color.bg};border-left-color:${color.border}`
+            : posStyle;
           html += `<div class="tg-block ${colorsOn?'':'colors-off'}" style="${style}" data-id="${s.id}">
             <div class="tg-block-l1">${escapeHtml(s.course||'—')} ${escapeHtml(s.type||'')}</div>
             <div class="tg-block-l2">${escapeHtml(s.topic||'')}</div>
@@ -518,7 +545,7 @@
         } else {
           const MAX = 3;
           const shown = cluster.items.slice(0, MAX), overflow = cluster.items.slice(MAX);
-          html += `<div class="tg-cluster" style="top:${topPct}%;height:${heightPct}%">`;
+          html += `<div class="tg-cluster" style="${posStyle}">`;
           shown.forEach(s => {
             const color = colorsOn ? getCourseColor(s.course) : { bg:'var(--surface-2)', border:'var(--border-2)' };
             html += `<div class="tg-cluster-item" style="border-left:3px solid ${colorsOn?color.border:'var(--border-2)'};background:${colorsOn?color.bg:'transparent'}" data-id="${s.id}">
@@ -946,41 +973,10 @@
     banner.id = 'admin-banner';
     banner.style.cssText = `display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 16px;border-radius:8px;margin-bottom:12px;font-size:12.5px;border:1px solid #BFDBFE;background:#EFF6FF;color:#1E40AF;`;
     banner.innerHTML = `<span>⚙ <strong>Admin mode active</strong> — click any session to view and edit it.</span>
-      <span style="display:flex;gap:8px">
-        <button id="fix-duration-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⏱ Fix Y1/Y2 Duration</button>
-        <button id="import-csv-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>
-      </span>`;
+      <button id="import-csv-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>`;
     const col = document.querySelector('.cal-column');
     col.insertBefore(banner, col.firstChild);
     document.getElementById('import-csv-btn').addEventListener('click', openImportModal);
-    document.getElementById('fix-duration-btn').addEventListener('click', fixYear1Year2Duration);
-  }
-
-  // One-time migration: Year 1 (2xx) and Year 2 (3xx) LEC/SRL sessions were
-  // originally imported as 60-minute blocks (e.g. 8:30–9:30); the correct
-  // duration is 50 minutes (8:30–9:20). This finds and corrects them live.
-  async function fixYear1Year2Duration() {
-    const candidates = allSessions.filter(s => {
-      if (!['1','2'].includes(String(s.year))) return false;
-      if (!['LEC','SRL'].includes(String(s.type||'').toUpperCase())) return false;
-      const st = timeToMinutes(s.startTime), en = timeToMinutes(s.endTime);
-      return st != null && en != null && (en - st) === 60;
-    });
-    if (!candidates.length) { showToast('No 60-minute Year 1/2 LEC/SRL sessions found — nothing to fix'); return; }
-    if (!confirm(`Found ${candidates.length} Year 1/2 LEC/SRL sessions at 60 minutes. Change them all to 50 minutes (e.g. 8:30–9:30 → 8:30–9:20)?`)) return;
-
-    const BATCH_SIZE = 200; let done = 0;
-    for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
-      const chunk = candidates.slice(i, i + BATCH_SIZE);
-      const batch = db.batch();
-      chunk.forEach(s => {
-        const st = timeToMinutes(s.startTime);
-        const newEnd = `${String(Math.floor((st+50)/60)).padStart(2,'0')}:${String((st+50)%60).padStart(2,'0')}`;
-        batch.set(db.collection(SESSIONS_COL).doc(s.id), { endTime: newEnd, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
-      });
-      try { await batch.commit(); done += chunk.length; } catch (err) { console.error('[Duration fix error]', err); }
-    }
-    showToast(`Fixed ${done} sessions to 50-minute duration`);
   }
 
   // ════════════════════════════════════════════════════════════
