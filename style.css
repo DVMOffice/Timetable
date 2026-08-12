@@ -245,7 +245,7 @@ select, input, textarea { font-family: inherit; color: inherit; }
 .tg-gridline { position: absolute; left: 0; right: 0; border-top: 1px solid var(--border); opacity: .55; }
 
 .tg-block {
-  position: absolute; left: 2px; right: 2px; border-radius: 4px; border-left: 3px solid var(--accent-mid);
+  position: absolute; border-radius: 4px; border-left: 3px solid var(--accent-mid);
   background: var(--accent-light); padding: 3px 5px; overflow: hidden; cursor: pointer;
   transition: filter var(--transition), box-shadow var(--transition); box-shadow: 0 1px 2px rgba(0,0,0,.06);
 }
@@ -257,7 +257,7 @@ select, input, textarea { font-family: inherit; color: inherit; }
 
 /* Overlap cluster (2+ sessions at the same time) — Month-view style stacked mini-list */
 .tg-cluster {
-  position: absolute; left: 2px; right: 2px; border-radius: 4px; border-left: 3px solid var(--accent-mid);
+  position: absolute; border-radius: 4px; border-left: 3px solid var(--accent-mid);
   background: var(--surface); overflow: hidden; box-shadow: 0 1px 2px rgba(0,0,0,.06); display: flex; flex-direction: column;
 }
 .tg-cluster-item { padding: 2px 5px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background var(--transition); flex-shrink: 0; }
