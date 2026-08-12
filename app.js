@@ -28,7 +28,7 @@
   const { DOW7, dateKey, addDays, isToday, buildMonthGrid, buildWeekDays,
           calcAcademicWeekNumber, getAcademicCycleLabel, calcDayName,
           weekHeaderLabel, weekRangeLabel, weekButtonLabel, weekMonday,
-          MONTH_SEQUENCE, blockPosition, hourGridlines, monthLabel } = CalendarEngine;
+          MONTH_SEQUENCE, monthLabel, timeToMinutes, DAY_START_MIN, DAY_END_MIN } = CalendarEngine;
 
   function escapeHtml(str) {
     const div = document.createElement('div'); div.textContent = str || ''; return div.innerHTML;
@@ -63,9 +63,9 @@
     }
   );
 
-  // ── Latest Updates feed (from change_log) ──────────────────
+  // ── Latest Updates feed (from change_log — one grouped doc per save) ──
   let latestChanges = [];
-  db.collection(CHANGELOG_COL).orderBy('changedAt', 'desc').limit(150).onSnapshot(
+  db.collection(CHANGELOG_COL).orderBy('changedAt', 'desc').limit(100).onSnapshot(
     snap => { latestChanges = snap.docs.map(d => d.data()); renderLatestUpdates(); },
     err => console.error('[Changelog listener]', err)
   );
@@ -84,6 +84,13 @@
     if ([...weekSel.options].some(o => o.value === currentWeekVal)) weekSel.value = currentWeekVal;
   }
 
+  function describeChangedFields(fields) {
+    if (!fields || !fields.length) return 'Updated';
+    if (fields.length === 1) return `${fields[0].fieldLabel} updated`;
+    if (fields.length === 2) return `${fields[0].fieldLabel} and ${fields[1].fieldLabel} updated`;
+    return `${fields.length} items are updated`;
+  }
+
   function renderLatestUpdates() {
     const el = document.getElementById('latest-updates-body');
     const yf = document.getElementById('updates-filter-year').value;
@@ -94,24 +101,34 @@
     if (yf !== 'all') updates = updates.filter(u => String(u.sessionYear) === yf);
     if (cf !== 'all') updates = updates.filter(u => (u.course||'').split(' - ')[0].trim() === cf);
     if (wf !== 'all') updates = updates.filter(u => String(u.sessionWeek) === wf);
-    updates = updates.slice(0, 20);
+    updates = updates.slice(0, 25);
 
     if (!updates.length) {
       el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-3);font-size:12px">No updates match this filter</div>`;
       return;
     }
-    el.innerHTML = updates.map(u => {
+    el.innerHTML = updates.map((u, i) => {
       const when = u.changedAt?.toDate ? u.changedAt.toDate() : null;
       const whenStr = when ? when.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }) + ' at ' + when.toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit' }) : '—';
-      return `<div style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px">
-        <div style="color:var(--text-3);font-size:10.5px;margin-bottom:3px">${whenStr}</div>
-        <div style="line-height:1.4"><strong>${escapeHtml(u.course||'')}</strong> — new <strong>${escapeHtml(u.fieldChanged||'')}</strong></div>
-        <div style="margin-top:3px;line-height:1.4">
-          ${u.oldValue ? `<span style="color:var(--text-3);text-decoration:line-through">${escapeHtml(u.oldValue)}</span> → ` : ''}
-          <span style="color:var(--accent);font-weight:600">${escapeHtml(u.newValue||'(removed)')}</span>
-        </div>
+      const line2 = [u.sessionYear ? `Year ${u.sessionYear}` : '', u.course || '', u.sessionType || '', u.sessionStartTime || ''].filter(Boolean).join(' | ');
+      return `<div class="update-item" data-idx="${i}">
+        <div class="update-line-1">Updated on ${whenStr}</div>
+        <div class="update-line-2">${escapeHtml(line2)}</div>
+        <div class="update-line-3">${escapeHtml(describeChangedFields(u.changedFields))}</div>
       </div>`;
     }).join('');
+
+    el.querySelectorAll('.update-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const u = updates[parseInt(item.dataset.idx)];
+        if (!u || !u.sessionDate) return;
+        calDate = new Date(u.sessionDate + 'T12:00:00');
+        calView = 'week';
+        document.getElementById('cal-week-btn').classList.add('active');
+        document.getElementById('cal-month-btn').classList.remove('active');
+        renderCalendar();
+      });
+    });
   }
   ['updates-filter-year','updates-filter-course','updates-filter-week'].forEach(id =>
     document.getElementById(id).addEventListener('change', renderLatestUpdates));
@@ -121,15 +138,19 @@
   // ════════════════════════════════════════════════════════════
   function getRoom(s) { return CourseData.getRoom(s); }
 
-  // Deterministic, lighter pastel color per course code (auto-generated, not hand-picked)
+  // Deterministic, lighter pastel color per course code. Uses a golden-angle
+  // hue step keyed off a stable index (not the raw string hash) so that
+  // similar-looking course codes (200, 202, 204…) still land on well-separated
+  // hues instead of clustering into one color per year.
   const colorCache = {};
+  const COURSE_COLOR_ORDER = CourseData.getAllCourses().map(c => c.code);
   function getCourseColor(course) {
     if (!course) return { bg: 'var(--surface-2)', border: 'var(--border-2)' };
     if (colorCache[course]) return colorCache[course];
-    let hash = 0;
-    for (let i = 0; i < course.length; i++) hash = course.charCodeAt(i) + ((hash << 5) - hash);
-    const hue = Math.abs(hash) % 360;
-    const c = { bg: `hsl(${hue}, 62%, 92%)`, border: `hsl(${hue}, 55%, 62%)` };
+    let idx = COURSE_COLOR_ORDER.indexOf(course);
+    if (idx === -1) { let h=0; for (let i=0;i<course.length;i++) h=course.charCodeAt(i)+((h<<5)-h); idx = Math.abs(h); }
+    const hue = (idx * 137.508) % 360; // golden angle — maximally spread hues
+    const c = { bg: `hsl(${hue}, 62%, 92%)`, border: `hsl(${hue}, 55%, 60%)` };
     colorCache[course] = c;
     return c;
   }
@@ -170,23 +191,39 @@
   function renderAll() {
     const searchActive = !!filters.search;
     document.getElementById('search-results-card').classList.toggle('hidden', !searchActive);
-    document.querySelector('.cal-card:not(.search-results-card)').classList.toggle('hidden', searchActive);
+    document.getElementById('cal-card').classList.toggle('hidden', searchActive);
     if (searchActive) renderSearchResults(); else renderCalendar();
     renderChips();
-    populateCourseFilterFromYear(filters.year);
   }
 
-  function populateCourseFilterFromYear(year) {
-    const sel = document.getElementById('filter-course');
-    const current = sel.value;
-    sel.innerHTML = '<option value="all">All Courses</option>';
+  // ── Custom Course dropdown (supports wrapped option text) ──────
+  function populateCourseDropdown(year) {
     const list = year === 'all' ? CourseData.getAllCourses() : CourseData.getCoursesForYear(year);
-    list.forEach(c => {
-      const o = document.createElement('option'); o.value = c.code; o.textContent = `${c.code} – ${c.name}`; sel.appendChild(o);
+    const listEl = document.getElementById('course-filter-list');
+    listEl.innerHTML = `<div class="fbar-dropdown-item ${filters.course==='all'?'active':''}" data-code="all">All Courses</div>` +
+      list.map(c => `<div class="fbar-dropdown-item ${filters.course===c.code?'active':''}" data-code="${c.code}">${escapeHtml(c.code)} – ${escapeHtml(c.name)}</div>`).join('');
+    listEl.querySelectorAll('.fbar-dropdown-item').forEach(item => {
+      item.addEventListener('click', () => {
+        filters.course = item.dataset.code;
+        updateCourseButtonLabel();
+        listEl.classList.add('hidden');
+        renderAll();
+      });
     });
-    if ([...sel.options].some(o => o.value === current)) sel.value = current;
-    else { sel.value = 'all'; filters.course = 'all'; }
+    if (!list.some(c => c.code === filters.course)) filters.course = 'all';
+    updateCourseButtonLabel();
   }
+  function updateCourseButtonLabel() {
+    const btn = document.getElementById('course-filter-btn');
+    if (filters.course === 'all') { btn.textContent = 'All Courses ▾'; return; }
+    const c = CourseData.findCourse(filters.course);
+    btn.textContent = (c ? `${c.code} – ${c.name}` : filters.course) + ' ▾';
+  }
+  document.getElementById('course-filter-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    document.getElementById('course-filter-list').classList.toggle('hidden');
+  });
+  document.addEventListener('click', () => document.getElementById('course-filter-list').classList.add('hidden'));
 
   // ════════════════════════════════════════════════════════════
   // MONTH DROPDOWN (Aug 2026 → Apr 2027)
@@ -208,6 +245,7 @@
     btn.classList.add('active');
     filters.year = btn.dataset.year;
     filters.course = 'all';
+    populateCourseDropdown(filters.year);
     renderAll();
   });
 
@@ -250,7 +288,7 @@
   });
 
   // ════════════════════════════════════════════════════════════
-  // CALENDAR RENDER — MONTH + WEEK (proportional time-grid)
+  // CALENDAR RENDER — MONTH + WEEK (compressed proportional time-grid)
   // ════════════════════════════════════════════════════════════
   function renderCalendar() {
     const data = getFiltered();
@@ -266,6 +304,17 @@
       labelEl.textContent = weekHeaderLabel(days, wk);
       renderWeekView(el, days, data);
     }
+    syncSideColumnHeight();
+  }
+
+  function syncSideColumnHeight() {
+    requestAnimationFrame(() => {
+      const card = document.getElementById('cal-card');
+      const side = document.querySelector('.side-column');
+      if (card && side && !card.classList.contains('hidden')) {
+        side.style.setProperty('--side-total-height', card.offsetHeight + 'px');
+      }
+    });
   }
 
   function renderMonthView(container, data) {
@@ -310,50 +359,143 @@
     </div>`;
   }
 
-  function renderWeekView(container, days, data) {
-    const lines = hourGridlines();
+  // ── Timeline compression: empty (all-day, no-session) time ranges are
+  // squeezed down to a small fixed width instead of consuming real space ──
+  const GAP_COMPRESS_MIN = 20;
+  function buildWeekTimeline(days, weekEvents) {
+    const intervals = weekEvents.map(s => {
+      let st = timeToMinutes(s.startTime);
+      let en = timeToMinutes(s.endTime) ?? st + 50;
+      st = Math.max(st, DAY_START_MIN); en = Math.min(en, DAY_END_MIN);
+      if (en <= st) en = st + 5;
+      return [st, en];
+    });
+    const points = new Set([DAY_START_MIN, DAY_END_MIN]);
+    intervals.forEach(([s,e]) => { points.add(s); points.add(e); });
+    for (let m = DAY_START_MIN; m <= DAY_END_MIN; m += 60) points.add(m);
+    const sorted = [...points].sort((a,b)=>a-b);
 
-    let html = `<div class="tg-wrap">
-      <div class="tg-corner"></div>`;
+    const segs = [];
+    for (let i = 0; i < sorted.length-1; i++) {
+      const t0 = sorted[i], t1 = sorted[i+1];
+      if (t1 <= t0) continue;
+      const hasContent = intervals.some(([s,e]) => s < t1 && e > t0);
+      const dur = t1 - t0;
+      segs.push({ t0, t1, weight: hasContent ? dur : Math.min(dur, GAP_COMPRESS_MIN) });
+    }
+    const total = segs.reduce((a,s)=>a+s.weight,0) || 1;
+    let cum = 0;
+    const bp = [{ t: sorted[0], pct: 0 }];
+    segs.forEach(s => { cum += s.weight; bp.push({ t: s.t1, pct: cum/total*100 }); });
+
+    function toPct(min) {
+      for (let i = 0; i < bp.length-1; i++) {
+        const a = bp[i], b = bp[i+1];
+        if (min >= a.t && min <= b.t) return b.t === a.t ? a.pct : a.pct + (min-a.t)/(b.t-a.t) * (b.pct-a.pct);
+      }
+      return min <= sorted[0] ? 0 : 100;
+    }
+    const hourMarks = sorted.filter(m => (m - DAY_START_MIN) % 60 === 0);
+    return { toPct, hourMarks };
+  }
+  function fmtHourLabel(min) {
+    const h24 = Math.floor(min/60), m = min%60;
+    const h12 = ((h24 + 11) % 12) + 1;
+    return `${h12}:${String(m).padStart(2,'0')}${h24 < 12 ? 'am' : 'pm'}`;
+  }
+
+  // Group overlapping same-day events into clusters so we never render true
+  // time-overlapping blocks — 2+ concurrent sessions become one stacked
+  // mini-list block (Month-view style, "+N more" for anything past 3).
+  function clusterEvents(events) {
+    const sorted = [...events].sort((a,b) => a._start - b._start);
+    const clusters = [];
+    sorted.forEach(ev => {
+      const last = clusters[clusters.length-1];
+      if (last && ev._start < last.end) { last.end = Math.max(last.end, ev._end); last.items.push(ev); }
+      else clusters.push({ start: ev._start, end: ev._end, items: [ev] });
+    });
+    return clusters;
+  }
+
+  function renderWeekView(container, days, data) {
+    const weekEvents = data.filter(s => days.some(d => dateKey(d) === s.date));
+    const timeline = buildWeekTimeline(days, weekEvents);
+
+    let html = `<div class="tg-wrap"><div class="tg-corner"></div>`;
     days.forEach((d,i) => {
       const isTd = isToday(d);
-      html += `<div class="tg-day-head ${isTd?'today-head':''}">
-        <div class="week-dow">${DOW7[i]}</div><div class="week-date">${d.getDate()}</div>
-      </div>`;
+      html += `<div class="tg-day-head ${isTd?'today-head':''}"><div class="week-dow">${DOW7[i]}</div><div class="week-date">${d.getDate()}</div></div>`;
     });
     html += `</div>`;
 
     html += `<div class="tg-body">
-      <div class="tg-time-axis">${lines.map(l => `<div class="tg-hour-label" style="top:${l.topPct}%">${l.label}</div>`).join('')}</div>`;
+      <div class="tg-time-axis"><div class="tg-track">${timeline.hourMarks.map(m => `<div class="tg-hour-label" style="top:${timeline.toPct(m)}%">${fmtHourLabel(m)}</div>`).join('')}</div></div>`;
 
     days.forEach(d => {
       const dk = dateKey(d);
       const isTd = isToday(d);
-      const events = data.filter(s => s.date === dk);
-      html += `<div class="tg-day-col ${isTd?'today-col':''}">`;
-      html += lines.map(l => `<div class="tg-gridline" style="top:${l.topPct}%"></div>`).join('');
-      events.forEach(s => {
-        const { topPct, heightPct } = blockPosition(s.startTime, s.endTime);
-        const color = colorsOn ? getCourseColor(s.course) : null;
-        const style = colorsOn
-          ? `top:${topPct}%;height:${heightPct}%;background:${color.bg};border-left-color:${color.border}`
-          : `top:${topPct}%;height:${heightPct}%`;
-        html += `<div class="tg-block ${colorsOn?'':'colors-off'}" style="${style}" data-id="${s.id}">
-          <div class="tg-block-l1">${escapeHtml(s.course||'—')} ${escapeHtml(s.type||'')}</div>
-          <div class="tg-block-l2">${escapeHtml(s.topic||'')}</div>
-          <div class="tg-block-l3">${escapeHtml(getRoom(s))}</div>
-        </div>`;
+      const events = weekEvents.filter(s => s.date === dk).map(s => {
+        let st = Math.max(timeToMinutes(s.startTime), DAY_START_MIN);
+        let en = Math.min(timeToMinutes(s.endTime) ?? st+50, DAY_END_MIN);
+        if (en <= st) en = st + 5;
+        return { ...s, _start: st, _end: en };
       });
-      html += `</div>`;
+      const clusters = clusterEvents(events);
+
+      html += `<div class="tg-day-col ${isTd?'today-col':''}"><div class="tg-track">`;
+      html += timeline.hourMarks.map(m => `<div class="tg-gridline" style="top:${timeline.toPct(m)}%"></div>`).join('');
+
+      clusters.forEach(cluster => {
+        const topPct = timeline.toPct(cluster.start), heightPct = Math.max(timeline.toPct(cluster.end) - topPct, 2);
+        if (cluster.items.length === 1) {
+          const s = cluster.items[0];
+          const color = colorsOn ? getCourseColor(s.course) : null;
+          const style = colorsOn
+            ? `top:${topPct}%;height:${heightPct}%;background:${color.bg};border-left-color:${color.border}`
+            : `top:${topPct}%;height:${heightPct}%`;
+          html += `<div class="tg-block ${colorsOn?'':'colors-off'}" style="${style}" data-id="${s.id}">
+            <div class="tg-block-l1">${escapeHtml(s.course||'—')} ${escapeHtml(s.type||'')}</div>
+            <div class="tg-block-l2">${escapeHtml(s.topic||'')}</div>
+            <div class="tg-block-l3">${escapeHtml(getRoom(s))}</div>
+          </div>`;
+        } else {
+          const MAX = 3;
+          const shown = cluster.items.slice(0, MAX), overflow = cluster.items.slice(MAX);
+          html += `<div class="tg-cluster" style="top:${topPct}%;height:${heightPct}%">`;
+          shown.forEach(s => {
+            const color = colorsOn ? getCourseColor(s.course) : { bg:'var(--surface-2)', border:'var(--border-2)' };
+            html += `<div class="tg-cluster-item" style="border-left:3px solid ${colorsOn?color.border:'var(--border-2)'};background:${colorsOn?color.bg:'transparent'}" data-id="${s.id}">
+              <div class="tg-block-l1">${escapeHtml(s.course||'—')} ${escapeHtml(s.type||'')}</div>
+            </div>`;
+          });
+          if (overflow.length) {
+            html += `<div class="tg-cluster-item tg-cluster-hidden-wrap" style="display:none">` +
+              overflow.map(s => `<div class="tg-cluster-item tg-cluster-hidden" style="border-left:3px solid ${colorsOn?getCourseColor(s.course).border:'var(--border-2)'}" data-id="${s.id}"><div class="tg-block-l1">${escapeHtml(s.course||'—')} ${escapeHtml(s.type||'')}</div></div>`).join('') +
+              `</div>`;
+            overflow.forEach(s => {
+              const color = colorsOn ? getCourseColor(s.course) : { bg:'var(--surface-2)', border:'var(--border-2)' };
+              html += `<div class="tg-cluster-item tg-cluster-hidden" style="border-left:3px solid ${colorsOn?color.border:'var(--border-2)'};background:${colorsOn?color.bg:'transparent'}" data-id="${s.id}">
+                <div class="tg-block-l1">${escapeHtml(s.course||'—')} ${escapeHtml(s.type||'')}</div>
+              </div>`;
+            });
+            html += `<div class="tg-cluster-more" data-count="${overflow.length}">+${overflow.length} more</div>`;
+          }
+          html += `</div>`;
+        }
+      });
+
+      html += `</div></div>`;
     });
     html += `</div>`;
 
     container.innerHTML = html;
     wireBlockClicks(container);
+    wireClusterMore(container);
   }
 
   function wireBlockClicks(container) {
-    container.querySelectorAll('.cal-event, .tg-block').forEach(el => {
+    container.querySelectorAll('.cal-event, .tg-block, .tg-cluster-item').forEach(el => {
       el.addEventListener('click', e => {
         e.stopPropagation();
         const s = allSessions.find(x => x.id === el.dataset.id);
@@ -372,6 +514,20 @@
         btn.dataset.expanded = expanded ? '0' : '1';
         btn.textContent = expanded ? `+${btn.dataset.count} more` : 'Show less';
         wireBlockClicks(wrap);
+      });
+    });
+  }
+  function wireClusterMore(container) {
+    container.querySelectorAll('.tg-cluster-more').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const cluster = btn.closest('.tg-cluster');
+        const hidden = cluster.querySelectorAll('.tg-cluster-hidden');
+        const expanded = btn.dataset.expanded === '1';
+        hidden.forEach(el => { el.style.display = expanded ? 'none' : 'block'; });
+        btn.dataset.expanded = expanded ? '0' : '1';
+        btn.textContent = expanded ? `+${btn.dataset.count} more` : 'Show less';
+        wireBlockClicks(cluster);
       });
     });
   }
@@ -398,6 +554,7 @@
     el.querySelectorAll('tr[data-id]').forEach(row => {
       row.addEventListener('click', () => { const s = allSessions.find(x=>x.id===row.dataset.id); if (s) openDetail(s); });
     });
+    syncSideColumnHeight();
   }
 
   // ════════════════════════════════════════════════════════════
@@ -429,7 +586,6 @@
   // SEARCH / RESET / CHIPS
   // ════════════════════════════════════════════════════════════
   document.getElementById('search-input').addEventListener('input', e => { filters.search = e.target.value; renderAll(); });
-  document.getElementById('filter-course').addEventListener('change', e => { filters.course = e.target.value; renderAll(); });
   document.getElementById('filter-type').addEventListener('change', e => { filters.type = e.target.value; renderAll(); });
 
   function resetFilters() {
@@ -439,6 +595,7 @@
     document.getElementById('filter-type').value = 'all';
     document.querySelectorAll('#year-btn-row .pill-btn').forEach(b => b.classList.toggle('active', b.dataset.year==='all'));
     document.querySelectorAll('#week-btn-row .pill-btn').forEach(b => b.classList.toggle('active', b.dataset.week==='all'));
+    populateCourseDropdown('all');
     renderAll();
   }
   document.getElementById('reset-filters').addEventListener('click', resetFilters);
@@ -465,8 +622,8 @@
         if (k === 'search') { filters.search=''; document.getElementById('search-input').value=''; }
         else if (k === 'month') { filters.month='all'; document.getElementById('filter-month').value='all'; }
         else if (k === 'type') { filters.type='all'; document.getElementById('filter-type').value='all'; }
-        else if (k === 'course') { filters.course='all'; document.getElementById('filter-course').value='all'; }
-        else if (k === 'year') { filters.year='all'; filters.course='all'; document.querySelectorAll('#year-btn-row .pill-btn').forEach(b=>b.classList.toggle('active',b.dataset.year==='all')); }
+        else if (k === 'course') { filters.course='all'; populateCourseDropdown(filters.year); }
+        else if (k === 'year') { filters.year='all'; filters.course='all'; document.querySelectorAll('#year-btn-row .pill-btn').forEach(b=>b.classList.toggle('active',b.dataset.year==='all')); populateCourseDropdown('all'); }
         else if (k === 'week') { filters.week='all'; document.querySelectorAll('#week-btn-row .pill-btn').forEach(b=>b.classList.toggle('active',b.dataset.week==='all')); }
         renderAll();
       });
@@ -609,13 +766,18 @@
     });
     return changes;
   }
-  async function logChanges(sessionId, courseLabel, changes, sessionYear, sessionWeek) {
+  // One grouped change_log doc per save (not one per field) so Latest Updates
+  // can summarize "N items updated" and show Year | Course | Type | Start Time.
+  async function logChangeGroup(session, changes) {
     if (!changes.length) return;
-    await Promise.all(changes.map(c => db.collection(CHANGELOG_COL).add({
-      sessionId, course: courseLabel, sessionYear, sessionWeek,
-      fieldChanged: c.fieldLabel, oldValue: c.oldValue, newValue: c.newValue,
+    await db.collection(CHANGELOG_COL).add({
+      sessionId: session.id,
+      course: `${session.course} - ${session.courseName||''}`,
+      sessionYear: session.year, sessionType: session.type, sessionStartTime: session.startTime,
+      sessionDate: session.date, sessionWeek: session.week,
+      changedFields: changes.map(c => ({ fieldLabel: c.fieldLabel, oldValue: c.oldValue, newValue: c.newValue })),
       changedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    })));
+    });
   }
 
   async function saveSession(existing) {
@@ -648,7 +810,7 @@
       await db.collection(SESSIONS_COL).doc(existing.id).set(data, { merge: true });
       await db.collection(HISTORY_COL).add({ sessionId: existing.id, ...data, savedAt: firebase.firestore.FieldValue.serverTimestamp() });
       const changes = detectChanges(existing, data);
-      await logChanges(existing.id, `${data.course} - ${data.courseName||''}`, changes, data.year, data.week);
+      await logChangeGroup({ id: existing.id, ...data }, changes);
       statusEl.className = 'save-status success'; statusEl.textContent = 'Saved ✓';
       showToast('Session updated');
       setTimeout(closeForm, 500);
@@ -692,14 +854,15 @@
   }
 
   // ════════════════════════════════════════════════════════════
-  // ADMIN MODE
+  // ADMIN MODE (bottom bar text button)
   // ════════════════════════════════════════════════════════════
   const ADMIN_PASSWORD = 'Changes26'; // ← change this to update the admin password
   let isAdmin = sessionStorage.getItem('timetable_admin') === '1';
 
   function updateAdminUI() {
     const btn = document.getElementById('admin-toggle');
-    btn.style.opacity = isAdmin ? '1' : '.35';
+    btn.textContent = isAdmin ? 'Exit Admin Mode' : 'Administrator Login';
+    btn.classList.toggle('is-admin', isAdmin);
     renderStatusBanner();
     renderAll();
   }
@@ -718,8 +881,8 @@
     banner.style.cssText = `display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 16px;border-radius:8px;margin-bottom:12px;font-size:12.5px;border:1px solid #BFDBFE;background:#EFF6FF;color:#1E40AF;`;
     banner.innerHTML = `<span>⚙ <strong>Admin mode active</strong> — click any session to view and edit it.</span>
       <button id="import-csv-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>`;
-    const toolbar = document.querySelector('.cal-toolbar');
-    toolbar.parentNode.insertBefore(banner, toolbar);
+    const col = document.querySelector('.cal-column');
+    col.insertBefore(banner, col.firstChild);
     document.getElementById('import-csv-btn').addEventListener('click', openImportModal);
   }
 
@@ -851,7 +1014,7 @@
   }
 
   // ════════════════════════════════════════════════════════════
-  // EXPORTS — Master (Excel/CSV/ICS), Filtered (Excel/CSV/ICS/PDF), View (PDF)
+  // EXPORTS — Master (Excel/CSV/ICS) + Filtered (Excel/CSV/ICS/PDF)
   // ════════════════════════════════════════════════════════════
   const EXPORT_HEADERS = ['Week','Date Range','Date','Day','Year','Start Time','End Time','Course','Course Name','Type','Topic','Room','Primary Instructor','Secondary Instructor','Finalized Instructors','Notes'];
   function sessionToRow(s) {
@@ -905,8 +1068,8 @@
       if (kind === 'filtered-xlsx') exportXLSX(getFiltered(), `ucvm_timetable_filtered_${today}.xlsx`);
       if (kind === 'filtered-csv')  exportCSV(getFiltered(), `ucvm_timetable_filtered_${today}.csv`);
       if (kind === 'filtered-ics')  exportICS(getFiltered(), `ucvm_timetable_filtered_${today}.ics`);
-      if (kind === 'view-pdf' || kind === 'filtered-pdf') window.print();
-      if (!['view-pdf','filtered-pdf'].includes(kind)) showToast('Export downloaded');
+      if (kind === 'filtered-pdf') window.print(); // print CSS un-clips the compressed/fixed-height grid so nothing scrolled-off is cut
+      if (kind !== 'filtered-pdf') showToast('Export downloaded');
     });
   });
 
@@ -933,11 +1096,11 @@
   }
 
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeForm(); });
+  window.addEventListener('resize', syncSideColumnHeight);
 
   // Initial render
-  populateCourseFilterFromYear('all');
-  document.getElementById('admin-toggle').style.opacity = isAdmin ? '1' : '.35';
-  renderStatusBanner();
+  populateCourseDropdown('all');
+  updateAdminUI();
   renderCalendar();
 
 })();
