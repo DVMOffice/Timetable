@@ -28,7 +28,9 @@
   const { DOW7, dateKey, addDays, isToday, buildMonthGrid, buildWeekDays,
           calcAcademicWeekNumber, getAcademicCycleLabel, calcDayName,
           weekHeaderLabel, weekRangeLabel, weekButtonLabel, weekMonday,
-          MONTH_SEQUENCE, monthLabel, timeToMinutes, DAY_START_MIN, DAY_END_MIN } = CalendarEngine;
+          MONTH_SEQUENCE, monthLabel, timeToMinutes, DAY_START_MIN, DAY_END_MIN,
+          weekMondaySem, weekRangeLabelSem, weekButtonLabelSem, calcSemesterWeek, weekHeaderLabelSem,
+          FALL_WEEKS_COUNT, WINTER_WEEKS_COUNT } = CalendarEngine;
 
   function escapeHtml(str) {
     const div = document.createElement('div'); div.textContent = str || ''; return div.innerHTML;
@@ -40,7 +42,8 @@
   let calView     = 'week';
   let calDate     = new Date();
   let allSessions = [];
-  let filters = { search: '', year: 'all', month: 'all', week: 'all', course: 'all', type: 'all' };
+  let currentSemester = 'fall'; // 'fall' | 'winter' — drives which set of Week buttons is shown
+  let filters = { search: '', year: 'all', month: 'all', week: 'all', weekSemester: 'fall', course: 'all', type: 'all' };
   let colorsOn = JSON.parse(localStorage.getItem('timetable_colors') ?? 'true');
 
   // ════════════════════════════════════════════════════════════
@@ -78,17 +81,27 @@
         const o = document.createElement('option'); o.value = c.code; o.textContent = c.code; courseSel.appendChild(o);
       });
     }
-    const weeks = [...new Set(allSessions.map(s => s.week).filter(w => w != null))].sort((a,b)=>a-b);
-    const currentWeekVal = weekSel.value;
-    weekSel.innerHTML = '<option value="all">All Weeks</option>' + weeks.map(w => `<option value="${w}">Week ${w}</option>`).join('');
-    if ([...weekSel.options].some(o => o.value === currentWeekVal)) weekSel.value = currentWeekVal;
+    if (weekSel.options.length <= 1) {
+      weekSel.innerHTML = '<option value="all">All Weeks</option>' +
+        Array.from({length: 18}, (_,i) => i+1).map(w => `<option value="${w}">Week ${w}</option>`).join('');
+    }
   }
 
+  function fmtTime12(hhmm) {
+    if (!hhmm) return '';
+    const [h,m] = hhmm.split(':').map(Number);
+    const h12 = ((h + 11) % 12) + 1;
+    return `${h12}:${String(m).padStart(2,'0')}${h < 12 ? 'am' : 'pm'}`;
+  }
+  function fmtShortDate(dateStr) {
+    if (!dateStr) return '';
+    return new Date(dateStr + 'T12:00:00').toLocaleDateString('en-CA', { month: 'short', day: 'numeric' });
+  }
   function describeChangedFields(fields) {
     if (!fields || !fields.length) return 'Updated';
-    if (fields.length === 1) return `${fields[0].fieldLabel} updated`;
-    if (fields.length === 2) return `${fields[0].fieldLabel} and ${fields[1].fieldLabel} updated`;
-    return `${fields.length} items are updated`;
+    const labels = fields.map(f => f.fieldLabel);
+    if (labels.length === 1) return `${labels[0]} updated`;
+    return `${labels.slice(0,-1).join(', ')}, and ${labels[labels.length-1]} updated`;
   }
 
   function renderLatestUpdates() {
@@ -100,7 +113,7 @@
     let updates = latestChanges;
     if (yf !== 'all') updates = updates.filter(u => String(u.sessionYear) === yf);
     if (cf !== 'all') updates = updates.filter(u => (u.course||'').split(' - ')[0].trim() === cf);
-    if (wf !== 'all') updates = updates.filter(u => String(u.sessionWeek) === wf);
+    if (wf !== 'all') updates = updates.filter(u => u.sessionDate && String(calcSemesterWeek(u.sessionDate).week) === wf);
     updates = updates.slice(0, 25);
 
     if (!updates.length) {
@@ -110,7 +123,7 @@
     el.innerHTML = updates.map((u, i) => {
       const when = u.changedAt?.toDate ? u.changedAt.toDate() : null;
       const whenStr = when ? when.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }) + ' at ' + when.toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit' }) : '—';
-      const line2 = [u.sessionYear ? `Year ${u.sessionYear}` : '', u.course || '', u.sessionType || '', u.sessionStartTime || ''].filter(Boolean).join(' | ');
+      const line2 = `Changes on ${u.sessionYear ? 'Year '+u.sessionYear+' | ' : ''}${fmtShortDate(u.sessionDate)} - ${fmtTime12(u.sessionStartTime)} session recorded`;
       return `<div class="update-item" data-idx="${i}">
         <div class="update-line-1">Updated on ${whenStr}</div>
         <div class="update-line-2">${escapeHtml(line2)}</div>
@@ -171,7 +184,11 @@
   function getFiltered() {
     let data = [...allSessions];
     if (filters.year   !== 'all') data = data.filter(s => String(s.year) === String(filters.year));
-    if (filters.week   !== 'all') data = data.filter(s => String(s.week) === String(filters.week));
+    if (filters.week   !== 'all') data = data.filter(s => {
+      if (!s.date) return false;
+      const sw = calcSemesterWeek(s.date);
+      return sw.semester === filters.weekSemester && String(sw.week) === String(filters.week);
+    });
     if (filters.course !== 'all') data = data.filter(s => String(s.course) === String(filters.course));
     if (filters.type   !== 'all') data = data.filter(s => s.type === filters.type);
     if (filters.month  !== 'all') data = data.filter(s => s.date && s.date.slice(0,7) === filters.month);
@@ -234,10 +251,29 @@
       const o = document.createElement('option'); o.value = m.value; o.textContent = m.label; sel.appendChild(o);
     });
   })();
-  document.getElementById('filter-month').addEventListener('change', e => { filters.month = e.target.value; renderAll(); });
+  document.getElementById('filter-month').addEventListener('change', e => {
+    filters.month = e.target.value;
+    if (filters.month !== 'all') {
+      const m = MONTH_SEQUENCE.find(x => x.value === filters.month);
+      if (m) {
+        calDate = new Date(m.year, m.month, 1);
+        const wantSemester = m.month >= 7 ? 'fall' : 'winter'; // Aug-Dec = fall, Jan-Apr = winter
+        if (wantSemester !== currentSemester) {
+          currentSemester = wantSemester;
+          document.querySelectorAll('#semester-btn-row .pill-btn').forEach(b => b.classList.toggle('active', b.dataset.semester===wantSemester));
+        }
+        filters.week = 'all'; filters.weekSemester = currentSemester;
+        populateWeekButtons();
+      }
+    }
+    renderAll();
+  });
 
   // ════════════════════════════════════════════════════════════
   // YEAR + WEEK BUTTON NAVIGATION
+  // ════════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════
+  // YEAR + SEMESTER + WEEK BUTTON NAVIGATION
   // ════════════════════════════════════════════════════════════
   document.getElementById('year-btn-row').addEventListener('click', e => {
     const btn = e.target.closest('.pill-btn'); if (!btn) return;
@@ -249,29 +285,46 @@
     renderAll();
   });
 
-  function populateWeekButtons() {
-    const row = document.getElementById('week-btn-row');
-    if (row.dataset.built) return;
-    row.dataset.built = '1';
-    for (let w = 1; w <= 17; w++) {
-      const btn = document.createElement('button');
-      btn.className = 'pill-btn'; btn.dataset.week = w; btn.textContent = weekButtonLabel(w);
-      row.appendChild(btn);
-    }
-  }
-  document.getElementById('week-btn-row').addEventListener('click', e => {
+  document.getElementById('semester-btn-row').addEventListener('click', e => {
     const btn = e.target.closest('.pill-btn'); if (!btn) return;
-    document.querySelectorAll('#week-btn-row .pill-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('#semester-btn-row .pill-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    filters.week = btn.dataset.week;
-    if (btn.dataset.week !== 'all') {
-      calDate = weekMonday(parseInt(btn.dataset.week));
-      calView = 'week';
-      document.getElementById('cal-week-btn').classList.add('active');
-      document.getElementById('cal-month-btn').classList.remove('active');
-    }
+    currentSemester = btn.dataset.semester;
+    filters.week = 'all'; filters.weekSemester = currentSemester;
+    populateWeekButtons();
+    calDate = weekMondaySem(currentSemester, 1);
     renderAll();
   });
+
+  function populateWeekButtons() {
+    const row1 = document.getElementById('week-btn-row-1');
+    const row2 = document.getElementById('week-btn-row-2');
+    const count = currentSemester === 'winter' ? WINTER_WEEKS_COUNT : FALL_WEEKS_COUNT;
+
+    row1.innerHTML = `<button class="pill-btn ${filters.week==='all'?'active':''}" data-week="all">All Weeks</button>` +
+      Array.from({length: 8}, (_,i) => i+1).map(w =>
+        `<button class="pill-btn ${String(filters.week)===String(w)?'active':''}" data-week="${w}">${weekButtonLabelSem(currentSemester, w)}</button>`).join('');
+    row2.innerHTML = Array.from({length: Math.max(count-8,0)}, (_,i) => i+9).map(w =>
+      `<button class="pill-btn ${String(filters.week)===String(w)?'active':''}" data-week="${w}">${weekButtonLabelSem(currentSemester, w)}</button>`).join('');
+  }
+  function wireWeekButtonRow(rowId) {
+    document.getElementById(rowId).addEventListener('click', e => {
+      const btn = e.target.closest('.pill-btn'); if (!btn) return;
+      document.querySelectorAll('#week-btn-row-1 .pill-btn, #week-btn-row-2 .pill-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      filters.week = btn.dataset.week;
+      filters.weekSemester = currentSemester;
+      if (btn.dataset.week !== 'all') {
+        calDate = weekMondaySem(currentSemester, parseInt(btn.dataset.week));
+        calView = 'week';
+        document.getElementById('cal-week-btn').classList.add('active');
+        document.getElementById('cal-month-btn').classList.remove('active');
+      }
+      renderAll();
+    });
+  }
+  wireWeekButtonRow('week-btn-row-1');
+  wireWeekButtonRow('week-btn-row-2');
 
   // ════════════════════════════════════════════════════════════
   // COLOR TOGGLE
@@ -300,8 +353,8 @@
       renderMonthView(el, data);
     } else {
       const days = buildWeekDays(calDate);
-      const wk = calcAcademicWeekNumber(dateKey(days[0]));
-      labelEl.textContent = weekHeaderLabel(days, wk);
+      const sw = calcSemesterWeek(dateKey(days[0]));
+      labelEl.textContent = weekHeaderLabelSem(days, sw.semester, sw.week);
       renderWeekView(el, days, data);
     }
     syncSideColumnHeight();
@@ -404,18 +457,21 @@
     return `${h12}:${String(m).padStart(2,'0')}${h24 < 12 ? 'am' : 'pm'}`;
   }
 
-  // Group overlapping same-day events into clusters so we never render true
-  // time-overlapping blocks — 2+ concurrent sessions become one stacked
-  // mini-list block (Month-view style, "+N more" for anything past 3).
-  function clusterEvents(events) {
-    const sorted = [...events].sort((a,b) => a._start - b._start);
-    const clusters = [];
-    sorted.forEach(ev => {
-      const last = clusters[clusters.length-1];
-      if (last && ev._start < last.end) { last.end = Math.max(last.end, ev._end); last.items.push(ev); }
-      else clusters.push({ start: ev._start, end: ev._end, items: [ev] });
+  // Group same-day sessions by their EXACT start time (not general interval
+  // overlap — overlap-based merging was chaining unrelated later sessions
+  // into one runaway 8:30 cluster whenever an earlier session's span was long).
+  // Each distinct start-time value becomes its own slot; a slot with 2+
+  // sessions renders as a Month-view-style stacked mini-list with "+N more".
+  function bucketEventsByStartTime(events) {
+    const groups = new Map();
+    events.forEach(ev => {
+      const key = ev.startTime || '';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(ev);
     });
-    return clusters;
+    return [...groups.values()]
+      .map(items => ({ start: Math.min(...items.map(i=>i._start)), end: Math.max(...items.map(i=>i._end)), items }))
+      .sort((a,b) => a.start - b.start);
   }
 
   function renderWeekView(container, days, data) {
@@ -441,7 +497,7 @@
         if (en <= st) en = st + 5;
         return { ...s, _start: st, _end: en };
       });
-      const clusters = clusterEvents(events);
+      const clusters = bucketEventsByStartTime(events);
 
       html += `<div class="tg-day-col ${isTd?'today-col':''}"><div class="tg-track">`;
       html += timeline.hourMarks.map(m => `<div class="tg-gridline" style="top:${timeline.toPct(m)}%"></div>`).join('');
@@ -589,12 +645,14 @@
   document.getElementById('filter-type').addEventListener('change', e => { filters.type = e.target.value; renderAll(); });
 
   function resetFilters() {
-    filters = { search:'', year:'all', month:'all', week:'all', course:'all', type:'all' };
+    filters = { search:'', year:'all', month:'all', week:'all', weekSemester:'fall', course:'all', type:'all' };
+    currentSemester = 'fall';
     document.getElementById('search-input').value = '';
     document.getElementById('filter-month').value = 'all';
     document.getElementById('filter-type').value = 'all';
     document.querySelectorAll('#year-btn-row .pill-btn').forEach(b => b.classList.toggle('active', b.dataset.year==='all'));
-    document.querySelectorAll('#week-btn-row .pill-btn').forEach(b => b.classList.toggle('active', b.dataset.week==='all'));
+    document.querySelectorAll('#semester-btn-row .pill-btn').forEach(b => b.classList.toggle('active', b.dataset.semester==='fall'));
+    populateWeekButtons();
     populateCourseDropdown('all');
     renderAll();
   }
@@ -604,7 +662,7 @@
   function renderChips() {
     const active = [];
     if (filters.year   !== 'all') active.push({k:'year',  l:`Year ${filters.year}`});
-    if (filters.week   !== 'all') active.push({k:'week',  l:`Week ${filters.week}`});
+    if (filters.week   !== 'all') active.push({k:'week',  l:`${filters.weekSemester==='winter'?'Winter':'Fall'} Week ${filters.week}`});
     if (filters.month  !== 'all') { const m = MONTH_SEQUENCE.find(x=>x.value===filters.month); active.push({k:'month', l:`Month: ${m?m.label:filters.month}`}); }
     if (filters.course !== 'all') { const c = CourseData.findCourse(filters.course); active.push({k:'course', l:`Course: ${filters.course}${c?' – '+c.name.slice(0,24):''}`}); }
     if (filters.type   !== 'all') active.push({k:'type',  l:`Type: ${filters.type}`});
@@ -624,7 +682,7 @@
         else if (k === 'type') { filters.type='all'; document.getElementById('filter-type').value='all'; }
         else if (k === 'course') { filters.course='all'; populateCourseDropdown(filters.year); }
         else if (k === 'year') { filters.year='all'; filters.course='all'; document.querySelectorAll('#year-btn-row .pill-btn').forEach(b=>b.classList.toggle('active',b.dataset.year==='all')); populateCourseDropdown('all'); }
-        else if (k === 'week') { filters.week='all'; document.querySelectorAll('#week-btn-row .pill-btn').forEach(b=>b.classList.toggle('active',b.dataset.week==='all')); }
+        else if (k === 'week') { filters.week='all'; document.querySelectorAll('#week-btn-row-1 .pill-btn, #week-btn-row-2 .pill-btn').forEach(b=>b.classList.toggle('active',b.dataset.week==='all')); }
         renderAll();
       });
     });
@@ -633,13 +691,20 @@
   // ════════════════════════════════════════════════════════════
   // READ-ONLY DETAIL POPUP (click any session block)
   // ════════════════════════════════════════════════════════════
+  function fmtDetailDate(dateStr) {
+    if (!dateStr) return '';
+    return new Date(dateStr + 'T12:00:00').toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
   function openDetail(session) {
     const modal = document.getElementById('modal');
     const isLab = String(session.type||'').toUpperCase() === 'LAB';
+    const sw = session.date ? calcSemesterWeek(session.date) : null;
+    const semWeekLabel = sw ? `${sw.semester==='winter'?'Winter':'Fall'} Week ${sw.week}` : '';
     const instructorRows = isLab
-      ? `<div class="detail-row"><span class="detail-label">Primary Instructor</span><span class="detail-value">${escapeHtml(session.primaryInstructor||'TBD')}</span></div>
-         <div class="detail-row"><span class="detail-label">Secondary Instructor</span><span class="detail-value">${escapeHtml(session.secondaryInstructor||'—')}</span></div>`
-      : `<div class="detail-row"><span class="detail-label">Instructor</span><span class="detail-value">${escapeHtml(session.finalizedInstructors||'TBD')}</span></div>`;
+      ? `<div class="detail-row"><span class="detail-label">👤 Primary Instructor</span><span class="detail-value">${escapeHtml(session.primaryInstructor||'TBD')}</span></div>
+         <div class="detail-row"><span class="detail-label">👥 Secondary Instructor</span><span class="detail-value">${escapeHtml(session.secondaryInstructor||'—')}</span></div>`
+      : `<div class="detail-row"><span class="detail-label">👤 Instructor</span><span class="detail-value">${escapeHtml(session.finalizedInstructors||'TBD')}</span></div>`;
 
     modal.innerHTML = `
       <div class="modal-backdrop" id="modal-backdrop"></div>
@@ -648,16 +713,17 @@
         <button class="modal-close" id="modal-close">✕</button>
         <div class="modal-header">
           <div class="modal-title">${escapeHtml(session.course||'')} ${escapeHtml(session.type||'')}</div>
-          <div class="modal-subtitle">${escapeHtml(session.day||'')}, ${escapeHtml(session.date||'')} · Week ${escapeHtml(String(session.week||''))}</div>
+          <div class="modal-subtitle">${escapeHtml(session.day||'')}, ${fmtDetailDate(session.date)} · ${escapeHtml(semWeekLabel)}</div>
         </div>
         <div class="modal-body">
-          <div class="detail-row"><span class="detail-label">Course</span><span class="detail-value">${escapeHtml(session.course||'')} – ${escapeHtml(session.courseName||'')}</span></div>
-          <div class="detail-row"><span class="detail-label">Year</span><span class="detail-value">Year ${escapeHtml(String(session.year||''))}</span></div>
-          <div class="detail-row"><span class="detail-label">Time</span><span class="detail-value">${escapeHtml(session.startTime||'')} – ${escapeHtml(session.endTime||'')}</span></div>
-          <div class="detail-row"><span class="detail-label">Room</span><span class="detail-value">${escapeHtml(getRoom(session))}${isLab ? ` &nbsp;·&nbsp; <a class="detail-lab-link" href="${SPY_HILL_URL}" target="_blank" rel="noopener">View Spy Hill Lab Schedule ↗</a>` : ''}</span></div>
-          <div class="detail-row"><span class="detail-label">Topic</span><span class="detail-value">${escapeHtml(session.topic||'—')}</span></div>
+          <div class="detail-row"><span class="detail-label">📘 Course</span><span class="detail-value">${escapeHtml(session.course||'')} – ${escapeHtml(session.courseName||'')}</span></div>
+          <div class="detail-row"><span class="detail-label">🏷️ Type</span><span class="detail-value">${escapeHtml(session.type||'')}</span></div>
+          <div class="detail-row"><span class="detail-label">🎓 Year</span><span class="detail-value">Year ${escapeHtml(String(session.year||''))}</span></div>
+          <div class="detail-row"><span class="detail-label">🕐 Time</span><span class="detail-value">${escapeHtml(session.startTime||'')} – ${escapeHtml(session.endTime||'')}</span></div>
+          <div class="detail-row"><span class="detail-label">📍 Room</span><span class="detail-value">${escapeHtml(getRoom(session))}${isLab ? ` &nbsp;·&nbsp; <a class="detail-lab-link" href="${SPY_HILL_URL}" target="_blank" rel="noopener">View Spy Hill Lab Schedule ↗</a>` : ''}</span></div>
+          <div class="detail-row"><span class="detail-label">📝 Topic</span><span class="detail-value">${escapeHtml(session.topic||'—')}</span></div>
           ${instructorRows}
-          ${session.notes ? `<div class="detail-row"><span class="detail-label">Notes</span><span class="detail-value">${escapeHtml(session.notes)}</span></div>` : ''}
+          ${session.notes ? `<div class="detail-row"><span class="detail-label">🗒️ Notes</span><span class="detail-value">${escapeHtml(session.notes)}</span></div>` : ''}
         </div>
         <div class="modal-footer">
           <div></div>
@@ -856,7 +922,7 @@
   // ════════════════════════════════════════════════════════════
   // ADMIN MODE (bottom bar text button)
   // ════════════════════════════════════════════════════════════
-  const ADMIN_PASSWORD = 'Changes26'; // ← change this to update the admin password
+  const ADMIN_PASSWORD = 'dvmprogram'; // ← change this to update the admin password
   let isAdmin = sessionStorage.getItem('timetable_admin') === '1';
 
   function updateAdminUI() {
@@ -880,10 +946,41 @@
     banner.id = 'admin-banner';
     banner.style.cssText = `display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 16px;border-radius:8px;margin-bottom:12px;font-size:12.5px;border:1px solid #BFDBFE;background:#EFF6FF;color:#1E40AF;`;
     banner.innerHTML = `<span>⚙ <strong>Admin mode active</strong> — click any session to view and edit it.</span>
-      <button id="import-csv-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>`;
+      <span style="display:flex;gap:8px">
+        <button id="fix-duration-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⏱ Fix Y1/Y2 Duration</button>
+        <button id="import-csv-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>
+      </span>`;
     const col = document.querySelector('.cal-column');
     col.insertBefore(banner, col.firstChild);
     document.getElementById('import-csv-btn').addEventListener('click', openImportModal);
+    document.getElementById('fix-duration-btn').addEventListener('click', fixYear1Year2Duration);
+  }
+
+  // One-time migration: Year 1 (2xx) and Year 2 (3xx) LEC/SRL sessions were
+  // originally imported as 60-minute blocks (e.g. 8:30–9:30); the correct
+  // duration is 50 minutes (8:30–9:20). This finds and corrects them live.
+  async function fixYear1Year2Duration() {
+    const candidates = allSessions.filter(s => {
+      if (!['1','2'].includes(String(s.year))) return false;
+      if (!['LEC','SRL'].includes(String(s.type||'').toUpperCase())) return false;
+      const st = timeToMinutes(s.startTime), en = timeToMinutes(s.endTime);
+      return st != null && en != null && (en - st) === 60;
+    });
+    if (!candidates.length) { showToast('No 60-minute Year 1/2 LEC/SRL sessions found — nothing to fix'); return; }
+    if (!confirm(`Found ${candidates.length} Year 1/2 LEC/SRL sessions at 60 minutes. Change them all to 50 minutes (e.g. 8:30–9:30 → 8:30–9:20)?`)) return;
+
+    const BATCH_SIZE = 200; let done = 0;
+    for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
+      const chunk = candidates.slice(i, i + BATCH_SIZE);
+      const batch = db.batch();
+      chunk.forEach(s => {
+        const st = timeToMinutes(s.startTime);
+        const newEnd = `${String(Math.floor((st+50)/60)).padStart(2,'0')}:${String((st+50)%60).padStart(2,'0')}`;
+        batch.set(db.collection(SESSIONS_COL).doc(s.id), { endTime: newEnd, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      });
+      try { await batch.commit(); done += chunk.length; } catch (err) { console.error('[Duration fix error]', err); }
+    }
+    showToast(`Fixed ${done} sessions to 50-minute duration`);
   }
 
   // ════════════════════════════════════════════════════════════
@@ -1099,6 +1196,7 @@
   window.addEventListener('resize', syncSideColumnHeight);
 
   // Initial render
+  populateWeekButtons();
   populateCourseDropdown('all');
   updateAdminUI();
   renderCalendar();
