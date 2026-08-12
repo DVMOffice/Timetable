@@ -8,161 +8,167 @@
 </head>
 <body>
 
-  <!-- ═══════════════ TOP BAR ═══════════════ -->
-  <div class="top-bar">
-    <div class="top-bar-left">
-      <div class="app-brand">
-        <span class="app-ucvm">UCVM</span>
-        <span class="app-brand-sep"></span>
-        <span class="app-title">2026-2027 Timetable</span>
-      </div>
-      <div class="conn-status"><span class="conn-dot" id="conn-dot"></span><span id="conn-text">Connecting…</span></div>
-    </div>
-    <div class="top-bar-right">
-      <button class="btn-icon" id="dark-toggle" title="Toggle dark mode">🌙</button>
-      <button class="btn-icon" id="admin-toggle" title="Admin mode">⚙</button>
-    </div>
-  </div>
-
-  <!-- ═══════════════ FILTER / NAV BAR ═══════════════ -->
+  <!-- ═══════════════ FREEZE / FILTER PANEL ═══════════════ -->
   <div class="filter-bar-wrap">
     <div class="filter-bar-inner">
 
-      <h1 class="page-title">2026-2027 UCVM Timetable</h1>
-
-      <!-- Year buttons -->
-      <div class="btn-row" id="year-btn-row">
-        <button class="pill-btn active" data-year="all">All Years</button>
-        <button class="pill-btn" data-year="1">Year 1</button>
-        <button class="pill-btn" data-year="2">Year 2</button>
-        <button class="pill-btn" data-year="3">Year 3</button>
+      <div class="brand-block">
+        <span class="brand-line brand-line-1">2026-2027</span>
+        <span class="brand-line brand-line-2">UCVM</span>
+        <span class="brand-line brand-line-3">Timetable</span>
       </div>
 
-      <!-- Week buttons (populated dynamically in app.js) -->
-      <div class="btn-row btn-row-scroll" id="week-btn-row">
-        <button class="pill-btn active" data-week="all">All Weeks</button>
-      </div>
+      <div class="filter-stack">
 
-      <div class="filter-row">
-        <div class="fbar-item fbar-search">
-          <span class="fbar-icon">🔍</span>
-          <input type="text" class="fbar-input" id="search-input" placeholder="Search course, topic, instructor…" />
-        </div>
-
-        <div class="fbar-item">
-          <span class="fbar-label">Month</span>
-          <div class="fbar-select-wrap">
-            <select class="fbar-select" id="filter-month">
-              <option value="all">All Months</option>
-              <!-- populated in app.js: August 2026 → April 2027 -->
-            </select>
-            <span class="fbar-arrow">▾</span>
+        <!-- Year row -->
+        <div class="filter-block-row">
+          <span class="filter-block-label">Year</span>
+          <div class="btn-row btn-row-left" id="year-btn-row">
+            <button class="pill-btn" data-year="1">Year 1</button>
+            <button class="pill-btn" data-year="2">Year 2</button>
+            <button class="pill-btn" data-year="3">Year 3</button>
+            <button class="pill-btn active" data-year="all">All Years</button>
           </div>
         </div>
 
-        <div class="fbar-item fbar-course">
-          <span class="fbar-label">Course</span>
-          <div class="fbar-select-wrap">
-            <select class="fbar-select" id="filter-course"><option value="all">All Courses</option></select>
-            <span class="fbar-arrow">▾</span>
-          </div>
+        <!-- Week row (populated dynamically in app.js) -->
+        <div class="btn-row btn-row-scroll btn-row-left" id="week-btn-row">
+          <button class="pill-btn active" data-week="all">All Weeks</button>
         </div>
 
-        <div class="fbar-item">
-          <span class="fbar-label">Type</span>
-          <div class="fbar-select-wrap">
-            <select class="fbar-select" id="filter-type">
-              <option value="all">All Types</option>
-              <option value="LEC">LEC</option>
-              <option value="LAB">LAB</option>
-              <option value="SRL">SRL</option>
-              <option value="Quiz/Midterm">Quiz/Midterm</option>
-              <option value="OSCE">OSCE</option>
-              <option value="Exam">Exam</option>
-            </select>
-            <span class="fbar-arrow">▾</span>
+        <!-- Search / Month / Course / Type / Reset -->
+        <div class="filter-row">
+          <div class="fbar-item fbar-search">
+            <span class="fbar-label">Search 🔍</span>
+            <input type="text" class="fbar-input" id="search-input" placeholder="course, topic, instructor" />
           </div>
+
+          <div class="fbar-item">
+            <span class="fbar-label">Month</span>
+            <div class="fbar-select-wrap">
+              <select class="fbar-select" id="filter-month">
+                <option value="all">All Months</option>
+              </select>
+              <span class="fbar-arrow">▾</span>
+            </div>
+          </div>
+
+          <div class="fbar-item fbar-course" id="course-filter-wrap">
+            <span class="fbar-label">Course</span>
+            <button class="fbar-dropdown-btn" id="course-filter-btn" type="button">All Courses ▾</button>
+            <div class="fbar-dropdown-list hidden" id="course-filter-list"></div>
+          </div>
+
+          <div class="fbar-item">
+            <span class="fbar-label">Type</span>
+            <div class="fbar-select-wrap">
+              <select class="fbar-select" id="filter-type">
+                <option value="all">All Types</option>
+                <option value="LEC">LEC</option>
+                <option value="LAB">LAB</option>
+                <option value="SRL">SRL</option>
+                <option value="Quiz/Midterm">Quiz/Midterm</option>
+                <option value="OSCE">OSCE</option>
+                <option value="Exam">Exam</option>
+              </select>
+              <span class="fbar-arrow">▾</span>
+            </div>
+          </div>
+
+          <button class="fbar-reset" id="reset-filters">↺ Reset</button>
         </div>
 
-        <button class="fbar-reset" id="reset-filters">↺ Reset</button>
-        <button class="fbar-reset" id="color-toggle">🎨 Colors: On</button>
-      </div>
+        <div class="active-chips-row hidden" id="active-chips-row">
+          <span class="active-chips-label">Active:</span>
+          <div class="filter-bar-chips" id="filter-chips"></div>
+          <button class="chips-clear" id="chips-clear">Clear all</button>
+        </div>
 
-      <div class="active-chips-row hidden" id="active-chips-row">
-        <span class="active-chips-label">Active:</span>
-        <div class="filter-bar-chips" id="filter-chips"></div>
-        <button class="chips-clear" id="chips-clear">Clear all</button>
       </div>
-
     </div>
   </div>
 
   <!-- ═══════════════ MAIN CONTENT ═══════════════ -->
   <div class="main-content">
-
-    <!-- Calendar toolbar -->
-    <div class="cal-toolbar">
-      <div class="cal-nav">
-        <button class="btn-cal-nav" id="cal-prev">‹</button>
-        <span class="cal-label-text" id="cal-label"></span>
-        <button class="btn-cal-nav" id="cal-next">›</button>
-      </div>
-      <button class="btn-cal-today" id="cal-today">Today</button>
-      <div class="cal-view-toggle">
-        <button class="cal-view-btn" id="cal-month-btn">Month</button>
-        <button class="cal-view-btn active" id="cal-week-btn">Week</button>
-      </div>
-    </div>
-
     <div class="main-view">
+
       <div class="cal-column">
-        <div class="cal-card">
+        <div class="cal-toolbar">
+          <button class="btn-cal-today" id="cal-today">Today</button>
+          <div class="cal-nav">
+            <button class="btn-cal-nav" id="cal-prev">‹</button>
+            <span class="cal-label-text" id="cal-label"></span>
+            <button class="btn-cal-nav" id="cal-next">›</button>
+          </div>
+          <div class="cal-toolbar-right">
+            <button class="fbar-reset" id="color-toggle">🎨 Colors: On</button>
+            <div class="cal-view-toggle">
+              <button class="cal-view-btn" id="cal-month-btn">Month</button>
+              <button class="cal-view-btn active" id="cal-week-btn">Week</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="cal-card" id="cal-card">
           <div id="calendar-body"></div>
         </div>
-        <!-- Search results render here instead of the calendar when a search is active -->
         <div class="cal-card search-results-card hidden" id="search-results-card">
           <div id="search-results-body"></div>
         </div>
       </div>
 
-      <div class="updates-column">
-        <div class="updates-panel-header">
-          <span class="updates-panel-title">📋 Latest Updates</span>
-          <span class="updates-panel-sub">Most recent changes across all sessions</span>
-          <div class="updates-filters">
-            <select class="updates-filter-select" id="updates-filter-year">
-              <option value="all">All Years</option>
-              <option value="1">Year 1</option><option value="2">Year 2</option><option value="3">Year 3</option>
-            </select>
-            <select class="updates-filter-select" id="updates-filter-course"><option value="all">All Courses</option></select>
-            <select class="updates-filter-select" id="updates-filter-week"><option value="all">All Weeks</option></select>
+      <div class="side-column">
+        <div class="side-panel updates-panel" id="updates-panel">
+          <div class="side-panel-header">
+            <span class="side-panel-title">📋 Latest Updates</span>
+            <span class="side-panel-sub">Most recent changes across all sessions</span>
+            <div class="updates-filters">
+              <select class="updates-filter-select" id="updates-filter-year">
+                <option value="all">All Years</option>
+                <option value="1">Year 1</option><option value="2">Year 2</option><option value="3">Year 3</option>
+              </select>
+              <select class="updates-filter-select" id="updates-filter-course"><option value="all">All Courses</option></select>
+              <select class="updates-filter-select" id="updates-filter-week"><option value="all">All Weeks</option></select>
+            </div>
+          </div>
+          <div class="side-panel-body" id="latest-updates-body"></div>
+        </div>
+
+        <div class="side-panel export-panel">
+          <div class="side-panel-header">
+            <span class="side-panel-title">📤 Data Export</span>
+          </div>
+          <div class="side-panel-body export-panel-body">
+            <div class="export-section-label">Export Master List</div>
+            <div class="export-btn-row">
+              <button class="export-btn" data-export="master-xlsx">Excel</button>
+              <button class="export-btn" data-export="master-csv">CSV</button>
+              <button class="export-btn" data-export="master-ics">ICS</button>
+            </div>
+            <div class="export-section-label">Export Filtered Results</div>
+            <div class="export-btn-row">
+              <button class="export-btn" data-export="filtered-xlsx">Excel</button>
+              <button class="export-btn" data-export="filtered-csv">CSV</button>
+              <button class="export-btn" data-export="filtered-ics">ICS</button>
+              <button class="export-btn" data-export="filtered-pdf">PDF</button>
+            </div>
           </div>
         </div>
-        <div class="updates-panel-body" id="latest-updates-body"></div>
       </div>
-    </div>
 
-    <!-- ═══════════════ EXPORT BAR (bottom) ═══════════════ -->
-    <div class="export-bar">
-      <div class="export-group">
-        <span class="export-group-label">Master List</span>
-        <button class="export-btn" data-export="master-xlsx">Excel</button>
-        <button class="export-btn" data-export="master-csv">CSV</button>
-        <button class="export-btn" data-export="master-ics">ICS</button>
-      </div>
-      <div class="export-group">
-        <span class="export-group-label">Current View</span>
-        <button class="export-btn" data-export="view-pdf">PDF</button>
-      </div>
-      <div class="export-group">
-        <span class="export-group-label">Filtered / Search Results</span>
-        <button class="export-btn" data-export="filtered-xlsx">Excel</button>
-        <button class="export-btn" data-export="filtered-csv">CSV</button>
-        <button class="export-btn" data-export="filtered-ics">ICS</button>
-        <button class="export-btn" data-export="filtered-pdf">PDF</button>
-      </div>
     </div>
+  </div>
 
+  <!-- ═══════════════ BOTTOM STATUS / ADMIN BAR ═══════════════ -->
+  <div class="bottom-bar">
+    <div class="bottom-bar-spacer"></div>
+    <div class="bottom-bar-center">
+      <span class="conn-status"><span class="conn-dot" id="conn-dot"></span><span id="conn-text">Connecting…</span></span>
+      <button class="admin-login-btn" id="admin-toggle">Administrator Login</button>
+    </div>
+    <div class="bottom-bar-right">
+      <button class="btn-icon" id="dark-toggle" title="Toggle dark mode">🌙</button>
+    </div>
   </div>
 
   <!-- ═══════════════ MODAL (edit form / import / read-only detail) ═══════════════ -->
