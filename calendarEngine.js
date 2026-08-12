@@ -113,6 +113,48 @@ const CalendarEngine = (() => {
   })();
 
   // ════════════════════════════════════════════════════════════
+  // SEMESTER-AWARE WEEK NUMBERING (Fall + Winter each restart at Week 1)
+  // Fall  Week 1 = Mon Aug 24, 2026 → 17 weeks (through Dec 18, 2026)
+  // Winter Week 1 = Mon Jan 4, 2027 → 16 weeks (through Apr 23, 2027)
+  // ════════════════════════════════════════════════════════════
+  const FALL_WEEK1_START   = new Date(2026, 7, 24);  FALL_WEEK1_START.setHours(0,0,0,0);
+  const WINTER_WEEK1_START = new Date(2027, 0, 4);   WINTER_WEEK1_START.setHours(0,0,0,0);
+  const FALL_WEEKS_COUNT = 17, WINTER_WEEKS_COUNT = 16;
+
+  function semesterBase(semester) { return semester === 'winter' ? WINTER_WEEK1_START : FALL_WEEK1_START; }
+  function semesterWeekCount(semester) { return semester === 'winter' ? WINTER_WEEKS_COUNT : FALL_WEEKS_COUNT; }
+
+  function weekMondaySem(semester, weekNum) {
+    const d = new Date(semesterBase(semester));
+    d.setDate(d.getDate() + (weekNum - 1) * 7);
+    return d;
+  }
+  function weekRangeLabelSem(semester, weekNum) {
+    const mon = weekMondaySem(semester, weekNum);
+    const fri = new Date(mon); fri.setDate(mon.getDate() + 4);
+    if (mon.getMonth() === fri.getMonth()) return `${mon.toLocaleDateString('en-CA',{month:'short'})} ${mon.getDate()}-${fri.getDate()}`;
+    return `${fmtMonthDay(mon)} - ${fmtMonthDay(fri)}`;
+  }
+  function weekButtonLabelSem(semester, weekNum) {
+    return `Week ${weekNum} (${weekRangeLabelSem(semester, weekNum)})`;
+  }
+  // Given a date, figure out which semester it falls in and its week number
+  // WITHIN that semester (restarts at 1 for Winter, never accumulates).
+  function calcSemesterWeek(dateStr) {
+    const d = new Date(dateStr + 'T12:00:00'); d.setHours(0,0,0,0);
+    if (d >= WINTER_WEEK1_START) {
+      return { semester: 'winter', week: Math.floor((d - WINTER_WEEK1_START) / 86400000 / 7) + 1 };
+    }
+    return { semester: 'fall', week: Math.max(1, Math.floor((d - FALL_WEEK1_START) / 86400000 / 7) + 1) };
+  }
+  function weekHeaderLabelSem(days, semester, weekNum) {
+    const first = days[0], last = days[days.length-1];
+    const year = last.getFullYear();
+    const semLabel = semester === 'winter' ? 'Winter' : 'Fall';
+    return `${semLabel} Week ${weekNum} : ${fmtMonthDay(first)} – ${fmtMonthDay(last)}, ${year}`;
+  }
+
+  // ════════════════════════════════════════════════════════════
   // TIME-GRID MATH (variable-duration proportional blocks)
   // Day runs 8:30am–4:30pm = 480 minutes, on a 5-minute backend grid.
   // ════════════════════════════════════════════════════════════
@@ -159,6 +201,9 @@ const CalendarEngine = (() => {
     MONTH_SEQUENCE,
     DAY_START_MIN, DAY_END_MIN, DAY_SPAN_MIN,
     timeToMinutes, blockPosition, hourGridlines,
+    // semester-aware (Fall/Winter each restart at Week 1)
+    FALL_WEEKS_COUNT, WINTER_WEEKS_COUNT,
+    weekMondaySem, weekRangeLabelSem, weekButtonLabelSem, calcSemesterWeek, weekHeaderLabelSem,
   };
 })();
 
