@@ -31,9 +31,22 @@
           </div>
         </div>
 
-        <!-- Week row (populated dynamically in app.js) -->
-        <div class="btn-row btn-row-scroll btn-row-left" id="week-btn-row">
-          <button class="pill-btn active" data-week="all">All Weeks</button>
+        <!-- Semester row -->
+        <div class="filter-block-row">
+          <span class="filter-block-label">Semester</span>
+          <div class="btn-row btn-row-left" id="semester-btn-row">
+            <button class="pill-btn active" data-semester="fall">Fall</button>
+            <button class="pill-btn" data-semester="winter">Winter</button>
+          </div>
+        </div>
+
+        <!-- Week rows (populated dynamically in app.js — split across two lines, no scroll) -->
+        <div class="filter-block-row filter-block-row-top">
+          <span class="filter-block-label">Week</span>
+          <div class="week-btn-lines">
+            <div class="btn-row btn-row-left" id="week-btn-row-1"></div>
+            <div class="btn-row btn-row-left" id="week-btn-row-2"></div>
+          </div>
         </div>
 
         <!-- Search / Month / Course / Type / Reset -->
