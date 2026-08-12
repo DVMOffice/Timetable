@@ -53,11 +53,14 @@ select, input, textarea { font-family: inherit; color: inherit; }
 .filter-bar-wrap { background: var(--surface-2); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 50; box-shadow: var(--shadow); }
 .filter-bar-inner { display: flex; align-items: flex-start; gap: 22px; padding: 10px 20px 8px; width: 100%; }
 
-.brand-block { display: flex; flex-direction: column; flex-shrink: 0; padding-top: 2px; min-width: 100px; }
+.brand-block { display: flex; flex-direction: column; flex-shrink: 0; padding-top: 2px; min-width: 110px; }
 .brand-line { font-family: var(--font-body); line-height: 1.15; color: var(--accent); }
-.brand-line-1 { font-size: 13px; font-weight: 600; color: var(--text-3); }
-.brand-line-2 { font-size: 19px; font-weight: 700; }
-.brand-line-3 { font-size: 13px; font-weight: 600; color: var(--text-2); }
+.brand-line-1 { font-size: 14.5px; font-weight: 600; color: var(--text-3); }
+.brand-line-2 { font-size: 23px; font-weight: 800; }
+.brand-line-3 { font-size: 16px; font-weight: 700; color: var(--text-2); }
+
+.filter-block-row-top { align-items: flex-start; }
+.week-btn-lines { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 
 .filter-stack { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
 
