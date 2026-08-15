@@ -178,6 +178,49 @@
     return s.finalizedInstructors || 'TBD';
   }
 
+  // ── Group colors (exact hex from the source Group Colors reference) ────
+  const GROUP_LETTER_COLORS = { A:'#FF6666', B:'#FAD16B', C:'#85CDB9', D:'#00B0F0', E:'#C59FE2', F:'#FF00FF' };
+  const GROUP_NAMED_COLORS  = { Blue:'#CFE4F4', Green:'#D6EEE8', Orange:'#FDF0CE', Purple:'#ECDFF5', Yellow:'#FFFFCC' };
+  function colorForGroupToken(token) {
+    const t = token.trim();
+    if (!t) return null;
+    if (/^[A-Fa-f]$/.test(t)) return GROUP_LETTER_COLORS[t.toUpperCase()];
+    const named = Object.keys(GROUP_NAMED_COLORS).find(n => t.toLowerCase().includes(n.toLowerCase()));
+    if (named) return GROUP_NAMED_COLORS[named];
+    return null; // unrecognized (e.g. numbered groups "1"/"2"/"3", "All", "See D2L") — no defined color
+  }
+  // A session's `group` field can hold multiple tokens ("A, B" / "D, E, F").
+  // Renders one pill per token; multi-token groups show as a hard-edged
+  // split-color pill (each band = one token's color) rather than a single
+  // averaged color, so each represented group stays visually distinct.
+  function renderGroupBadge(groupStr) {
+    if (!groupStr) return '';
+    const tokens = groupStr.split(',').map(t => t.trim()).filter(Boolean);
+    const colors = tokens.map(t => colorForGroupToken(t) || '#D8DCE3');
+    let bg;
+    if (colors.length === 1) bg = colors[0];
+    else {
+      const step = 100 / colors.length;
+      const stops = colors.map((c,i) => `${c} ${i*step}%, ${c} ${(i+1)*step}%`).join(', ');
+      bg = `linear-gradient(to right, ${stops})`;
+    }
+    const textColor = colors.length === 1 && ['#FF00FF','#00B0F0'].includes(colors[0]) ? '#fff' : '#1a1a1a';
+    return `<span class="group-badge" style="background:${bg};color:${textColor}" title="Group ${escapeHtml(groupStr)}">${escapeHtml(tokens.join(','))}</span>`;
+  }
+
+  // Prefer the stored last-name-only display field (new lab data); fall back
+  // to deriving one from the full name for older sessions that don't have it.
+  function shortInstructorName(full, display) {
+    if (display) return display;
+    if (!full) return '';
+    const parts = full.trim().split(/\s+/);
+    return parts[parts.length - 1];
+  }
+  function tileInstructorNames(s) {
+    const names = [shortInstructorName(s.primaryInstructor, s.primaryInstructorDisplay), shortInstructorName(s.secondaryInstructor, s.secondaryInstructorDisplay)].filter(Boolean);
+    return names.join(', ');
+  }
+
   // ════════════════════════════════════════════════════════════
   // FILTERING
   // ════════════════════════════════════════════════════════════
@@ -211,11 +254,29 @@
     document.getElementById('cal-card').classList.toggle('hidden', searchActive);
     if (searchActive) renderSearchResults(); else renderCalendar();
     renderChips();
+    populateCourseDropdown(filters.year);
   }
 
   // ── Custom Course dropdown (supports wrapped option text) ──────
   function populateCourseDropdown(year) {
-    const list = year === 'all' ? CourseData.getAllCourses() : CourseData.getCoursesForYear(year);
+    // Build the list from real session data (course + its actual stored year)
+    // rather than the hardcoded courseData mapping — a course can legitimately
+    // carry a different Year than courseData's default grouping (e.g. some
+    // 505 lab sessions are tagged Year 1 even though 505's lecture component
+    // is a Year 3 course), and the filter should reflect what's really there.
+    const seen = new Map(); // code -> {code, name, years:Set}
+    allSessions.forEach(s => {
+      if (!s.course) return;
+      if (!seen.has(s.course)) {
+        const known = CourseData.findCourse(s.course);
+        seen.set(s.course, { code: s.course, name: s.courseName || (known ? known.name : ''), years: new Set() });
+      }
+      if (s.year != null) seen.get(s.course).years.add(String(s.year));
+    });
+    let list = [...seen.values()];
+    if (year !== 'all') list = list.filter(c => c.years.has(String(year)));
+    list.sort((a,b) => a.code.localeCompare(b.code, undefined, {numeric:true}));
+
     const listEl = document.getElementById('course-filter-list');
     listEl.innerHTML = `<div class="fbar-dropdown-item ${filters.course==='all'?'active':''}" data-code="all">All Courses</div>` +
       list.map(c => `<div class="fbar-dropdown-item ${filters.course===c.code?'active':''}" data-code="${c.code}">${escapeHtml(c.code)} – ${escapeHtml(c.name)}</div>`).join('');
@@ -498,6 +559,24 @@
     return clusters;
   }
 
+  // Group same-day sessions that share a labGroupId (+column) into one
+  // rotation tile — this is what turns a rotation's individual rows (one per
+  // time-slot × station) into a single compact calendar block.
+  function buildLabTiles(events) {
+    const groups = new Map();
+    events.filter(ev => ev.labGroupId).forEach(ev => {
+      const key = `${ev.labGroupId}|${ev.column||''}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(ev);
+    });
+    return [...groups.values()].map(items => {
+      const start = Math.min(...items.map(i=>i._start)), end = Math.max(...items.map(i=>i._end));
+      const topics = [...new Set(items.map(i => i.topic).filter(Boolean))];
+      const instructors = [...new Set(items.flatMap(i => [shortInstructorName(i.primaryInstructor,i.primaryInstructorDisplay), shortInstructorName(i.secondaryInstructor,i.secondaryInstructorDisplay)]).filter(Boolean))];
+      return { start, end, isLabTile: true, labGroupId: items[0].labGroupId, column: items[0].column, topics, instructors, items };
+    });
+  }
+
   function renderWeekView(container, days, data) {
     const weekEvents = data.filter(s => days.some(d => dateKey(d) === s.date));
     const timeline = buildWeekTimeline(days, weekEvents);
@@ -521,17 +600,29 @@
         if (en <= st) en = st + 5;
         return { ...s, _start: st, _end: en };
       });
-      const clusters = assignLanes(bucketEventsByStartTime(events));
+
+      const labTiles = buildLabTiles(events);
+      const plainEvents = events.filter(ev => !ev.labGroupId);
+      const clusters = bucketEventsByStartTime(plainEvents);
+      const renderItems = assignLanes([...labTiles, ...clusters].sort((a,b) => a.start - b.start));
 
       html += `<div class="tg-day-col ${isTd?'today-col':''}"><div class="tg-track">`;
       html += timeline.hourMarks.map(m => `<div class="tg-gridline" style="top:${timeline.toPct(m)}%"></div>`).join('');
 
-      clusters.forEach(cluster => {
+      renderItems.forEach(cluster => {
         const topPct = timeline.toPct(cluster.start), heightPct = Math.max(timeline.toPct(cluster.end) - topPct, 2);
         const laneCount = cluster.laneCount || 1, lane = cluster.lane || 0;
         const laneWidth = 100 / laneCount;
         const posStyle = `top:${topPct}%;height:${heightPct}%;left:calc(${lane*laneWidth}% + 2px);width:calc(${laneWidth}% - 4px)`;
-        if (cluster.items.length === 1) {
+
+        if (cluster.isLabTile) {
+          const timeLabel = `${cluster.items[0].startTime}-${(() => { const h=Math.floor(cluster.end/60), m=cluster.end%60; return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`; })()}`;
+          html += `<div class="tg-block tg-lab-tile" style="${posStyle}" data-labgroup="${escapeHtml(cluster.labGroupId)}" data-column="${escapeHtml(cluster.column||'')}">
+            <div class="tg-block-l1">${escapeHtml(timeLabel)}</div>
+            <div class="tg-block-l2">${escapeHtml(cluster.topics.join(' / '))}</div>
+            <div class="tg-block-l3">${escapeHtml(cluster.instructors.join(', '))}</div>
+          </div>`;
+        } else if (cluster.items.length === 1) {
           const s = cluster.items[0];
           const color = colorsOn ? getCourseColor(s.course) : null;
           const style = colorsOn
@@ -575,6 +666,7 @@
     container.innerHTML = html;
     wireBlockClicks(container);
     wireClusterMore(container);
+    wireLabTileClicks(container);
   }
 
   function wireBlockClicks(container) {
@@ -611,6 +703,14 @@
         btn.dataset.expanded = expanded ? '0' : '1';
         btn.textContent = expanded ? `+${btn.dataset.count} more` : 'Show less';
         wireBlockClicks(cluster);
+      });
+    });
+  }
+  function wireLabTileClicks(container) {
+    container.querySelectorAll('.tg-lab-tile').forEach(el => {
+      el.addEventListener('click', e => {
+        e.stopPropagation();
+        openLabMatrixDetail(el.dataset.labgroup, el.dataset.column);
       });
     });
   }
@@ -771,6 +871,88 @@
   function closeForm() {
     const modal = document.getElementById('modal');
     modal.classList.remove('open'); modal.innerHTML = '';
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // LAB ROTATION MATRIX POPUP — reconstructs the "Second Year Lab / 505 Lab"
+  // style table from all sessions sharing one labGroupId(+column).
+  // ════════════════════════════════════════════════════════════
+  function openLabMatrixDetail(labGroupId, column) {
+    const rows = allSessions.filter(s => s.labGroupId === labGroupId && (s.column||'') === (column||''));
+    if (!rows.length) return;
+    const modal = document.getElementById('modal');
+
+    // Columns = distinct time slots (sorted by start time)
+    const slotMap = new Map();
+    rows.forEach(s => { const k = `${s.startTime}|${s.endTime}`; if (!slotMap.has(k)) slotMap.set(k, { start: s.startTime, end: s.endTime }); });
+    const slots = [...slotMap.values()].sort((a,b) => (a.start||'').localeCompare(b.start||''));
+
+    // Rows = distinct stations (topic + instructor combo), in first-appearance order
+    const stationMap = new Map();
+    rows.forEach(s => {
+      const key = `${s.topic}||${s.primaryInstructor||''}||${s.secondaryInstructor||''}`;
+      if (!stationMap.has(key)) {
+        stationMap.set(key, {
+          topic: s.topic, room: getRoom(s),
+          instructorLabel: [s.primaryInstructor, s.secondaryInstructor ? `(${s.secondaryInstructor})` : ''].filter(Boolean).join(' '),
+          cellsBySlot: new Map(),
+        });
+      }
+      const st = stationMap.get(key);
+      const slotKey = `${s.startTime}|${s.endTime}`;
+      if (!st.cellsBySlot.has(slotKey)) st.cellsBySlot.set(slotKey, []);
+      st.cellsBySlot.get(slotKey).push(s);
+    });
+    const stations = [...stationMap.values()];
+
+    const sample = rows[0];
+    const courses = [...new Set(rows.map(s => `${s.course} - ${s.courseName||''}`))];
+    const sw = sample.date ? calcSemesterWeek(sample.date) : null;
+    const semWeekLabel = sw ? `${sw.semester==='winter'?'Winter':'Fall'} Week ${sw.week}` : '';
+
+    const headerCells = slots.map(sl => `<th>${escapeHtml(sl.start)}-${escapeHtml(sl.end)}</th>`).join('');
+    const bodyRows = stations.map(st => {
+      const cells = slots.map(sl => {
+        const key = `${sl.start}|${sl.end}`;
+        const matches = st.cellsBySlot.get(key) || [];
+        if (!matches.length) return `<td class="lab-matrix-empty"></td>`;
+        return `<td>${matches.map(m => renderGroupBadge(m.group)).join(' ')}</td>`;
+      }).join('');
+      return `<tr>
+        <td class="lab-matrix-station">${escapeHtml(st.topic||'')}<div class="lab-matrix-instructor">${escapeHtml(st.instructorLabel||'')}</div></td>
+        <td class="lab-matrix-room">${escapeHtml(st.room||'')}</td>
+        ${cells}
+      </tr>`;
+    }).join('');
+
+    modal.innerHTML = `
+      <div class="modal-backdrop" id="modal-backdrop"></div>
+      <div class="modal-box" style="width:min(820px,95vw)">
+        <div class="modal-strip"></div>
+        <button class="modal-close" id="modal-close">✕</button>
+        <div class="modal-header">
+          <div class="modal-title">🧪 ${escapeHtml(courses.join(' / '))}</div>
+          <div class="modal-subtitle">${escapeHtml(sample.day||'')}, ${fmtDetailDate(sample.date)} · ${escapeHtml(semWeekLabel)}</div>
+        </div>
+        <div class="modal-body">
+          <div class="lab-matrix-wrap">
+            <table class="lab-matrix-table">
+              <thead><tr><th>Station / Instructor</th><th>Room</th>${headerCells}</tr></thead>
+              <tbody>${bodyRows}</tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <div></div>
+          <div style="display:flex;gap:10px">
+            <button class="btn btn-secondary" id="detail-close-btn">Close</button>
+          </div>
+        </div>
+      </div>`;
+    modal.classList.add('open');
+    document.getElementById('modal-close').onclick = closeForm;
+    document.getElementById('modal-backdrop').onclick = closeForm;
+    document.getElementById('detail-close-btn').onclick = closeForm;
   }
 
   // ════════════════════════════════════════════════════════════
