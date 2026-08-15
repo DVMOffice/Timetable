@@ -149,7 +149,7 @@
   // ════════════════════════════════════════════════════════════
   // ROOM + COLOR
   // ════════════════════════════════════════════════════════════
-  function getRoom(s) { return CourseData.getRoom(s); }
+  function getRoom(s) { return s.room || CourseData.getRoom(s); }
 
   // Deterministic, lighter pastel color per course code. Uses a golden-angle
   // hue step keyed off a stable index (not the raw string hash) so that
@@ -749,6 +749,7 @@
           <div class="detail-row"><span class="detail-label">🕐 Time</span><span class="detail-value">${escapeHtml(session.startTime||'')} – ${escapeHtml(session.endTime||'')}</span></div>
           <div class="detail-row"><span class="detail-label">📍 Room</span><span class="detail-value">${escapeHtml(getRoom(session))}${isLab ? ` &nbsp;·&nbsp; <a class="detail-lab-link" href="${SPY_HILL_URL}" target="_blank" rel="noopener">View Spy Hill Lab Schedule ↗</a>` : ''}</span></div>
           <div class="detail-row"><span class="detail-label">📝 Topic</span><span class="detail-value">${escapeHtml(session.topic||'—')}</span></div>
+          ${session.group ? `<div class="detail-row"><span class="detail-label">🧩 Group</span><span class="detail-value">${escapeHtml(session.group)}</span></div>` : ''}
           ${instructorRows}
           ${session.notes ? `<div class="detail-row"><span class="detail-label">🗒️ Notes</span><span class="detail-value">${escapeHtml(session.notes)}</span></div>` : ''}
         </div>
@@ -847,8 +848,10 @@
 
   const FIELD_LABELS = {
     year: 'Year', startTime: 'Start Time', endTime: 'End Time', course: 'Course',
-    courseName: 'Course Name', type: 'Type', topic: 'Topic',
+    courseName: 'Course Name', type: 'Type', topic: 'Topic', room: 'Room', group: 'Group',
+    labGroupId: 'Lab Group ID', column: 'Column',
     primaryInstructor: 'Primary Instructor', secondaryInstructor: 'Secondary Instructor',
+    primaryInstructorDisplay: 'Primary Instructor Display', secondaryInstructorDisplay: 'Secondary Instructor Display',
     finalizedInstructors: 'Finalized Instructors', notes: 'Notes',
   };
   function detectChanges(oldData, newData) {
@@ -988,7 +991,10 @@
     date: ['date'], day: ['day'], year: ['year','program year'],
     startTime: ['start time','starttime'], endTime: ['end time','endtime'],
     course: ['course','course code','course #'], courseName: ['course name'], courseDept: ['department','dept'],
-    type: ['type'], topic: ['topic'],
+    type: ['type'], topic: ['topic'], room: ['room'], group: ['group'],
+    labGroupId: ['lab group id', 'labgroupid'], column: ['column'],
+    primaryInstructorDisplay: ['primary instructor display'],
+    secondaryInstructorDisplay: ['secondary instructor display'],
     numInstructors: ['# of instructors','num instructors','number of instructors'],
     instructorProposed: ['instructor proposed','proposed instructor'],
     primaryInstructor: ['primary instructor'], secondaryInstructor: ['secondary instructor'],
@@ -1071,8 +1077,11 @@
     function renderImportPreview(sessions) {
       const el = document.getElementById('import-preview');
       if (!sessions.length) { el.innerHTML = `<div style="padding:14px;text-align:center;color:var(--danger);font-size:12.5px">No valid rows found.</div>`; return; }
+      const existingByKey = new Set(allSessions.map(s => `${s.course}|${s.type}|${s.date}|${s.startTime}`));
+      const willUpdate = sessions.filter(s => existingByKey.has(`${s.course}|${s.type}|${s.date}|${s.startTime}`)).length;
+      const willCreate = sessions.length - willUpdate;
       const preview = sessions.slice(0, 8);
-      el.innerHTML = `<div style="font-size:12px;color:var(--text-3);margin:8px 0">Found <strong>${sessions.length}</strong> rows. Preview:</div>
+      el.innerHTML = `<div style="font-size:12px;color:var(--text-3);margin:8px 0">Found <strong>${sessions.length}</strong> rows — <strong>${willCreate}</strong> will be created as new, <strong>${willUpdate}</strong> match existing sessions and will be updated in place. Preview:</div>
         <div style="overflow-x:auto;max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:6px">
           <table class="import-preview-table" style="width:100%;border-collapse:collapse">
             <thead><tr style="background:var(--surface-2)"><th>Week</th><th>Date</th><th>Course</th><th>Type</th><th>Topic</th></tr></thead>
@@ -1086,32 +1095,84 @@
       const statusEl = document.getElementById('import-status');
       const btn = document.getElementById('import-confirm-btn');
       btn.disabled = true; statusEl.className = 'save-status saving';
-      const BATCH_SIZE = 200; let imported = 0, failed = 0;
-      for (let i = 0; i < parsedSessions.length; i += BATCH_SIZE) {
-        const chunk = parsedSessions.slice(i, i + BATCH_SIZE);
-        statusEl.textContent = `Importing ${Math.min(i+BATCH_SIZE, parsedSessions.length)} of ${parsedSessions.length}…`;
+
+      // Build a lookup of existing sessions by course+type+date+startTime so
+      // a row that matches something already in the database updates that
+      // session in place instead of creating a visible duplicate.
+      const existingByKey = new Map();
+      allSessions.forEach(s => existingByKey.set(`${s.course}|${s.type}|${s.date}|${s.startTime}`, s));
+
+      const toCreate = [], toUpdate = [];
+      parsedSessions.forEach(session => {
+        const key = `${session.course}|${session.type}|${session.date}|${session.startTime}`;
+        const existing = existingByKey.get(key);
+        if (existing) toUpdate.push({ existing, incoming: session }); else toCreate.push(session);
+      });
+
+      const BATCH_SIZE = 150; let created = 0, updated = 0, failed = 0;
+
+      for (let i = 0; i < toCreate.length; i += BATCH_SIZE) {
+        const chunk = toCreate.slice(i, i + BATCH_SIZE);
+        statusEl.textContent = `Creating ${Math.min(i+BATCH_SIZE, toCreate.length)} of ${toCreate.length} new…`;
         const batch = db.batch();
         chunk.forEach(session => {
           const sessionRef = db.collection(SESSIONS_COL).doc();
           const data = { ...session, createdAt: firebase.firestore.FieldValue.serverTimestamp(), updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
           batch.set(sessionRef, data);
-          const historyRef = db.collection(HISTORY_COL).doc();
-          batch.set(historyRef, { sessionId: sessionRef.id, ...data, savedAt: firebase.firestore.FieldValue.serverTimestamp() });
+          batch.set(db.collection(HISTORY_COL).doc(), { sessionId: sessionRef.id, ...data, savedAt: firebase.firestore.FieldValue.serverTimestamp() });
         });
-        try { await batch.commit(); imported += chunk.length; }
-        catch (err) { console.error('[Batch import error]', err); failed += chunk.length; }
+        try { await batch.commit(); created += chunk.length; }
+        catch (err) { console.error('[Batch import create error]', err); failed += chunk.length; }
       }
-      if (failed === 0) { statusEl.className='save-status success'; statusEl.textContent=`Imported ${imported} of ${parsedSessions.length} ✓`; showToast(`${imported} sessions imported`); setTimeout(closeForm, 1200); }
-      else { statusEl.className='save-status error'; statusEl.textContent=`Imported ${imported}, ${failed} failed — check console`; showToast(`${failed} rows failed`, true); btn.disabled=false; }
+
+      for (let i = 0; i < toUpdate.length; i += BATCH_SIZE) {
+        const chunk = toUpdate.slice(i, i + BATCH_SIZE);
+        statusEl.textContent = `Updating ${Math.min(i+BATCH_SIZE, toUpdate.length)} of ${toUpdate.length} existing…`;
+        const batch = db.batch();
+        chunk.forEach(({ existing, incoming }) => {
+          // Only overwrite fields the incoming row actually has a value for —
+          // blank cells shouldn't erase better existing data.
+          const merged = { ...existing };
+          Object.entries(incoming).forEach(([k,v]) => { if (v !== '' && v != null) merged[k] = v; });
+          merged.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
+          const patch = { ...merged }; delete patch.id;
+          batch.set(db.collection(SESSIONS_COL).doc(existing.id), patch, { merge: true });
+          batch.set(db.collection(HISTORY_COL).doc(), { sessionId: existing.id, ...patch, savedAt: firebase.firestore.FieldValue.serverTimestamp() });
+          const changes = detectChanges(existing, merged);
+          if (changes.length) {
+            batch.set(db.collection(CHANGELOG_COL).doc(), {
+              sessionId: existing.id, course: `${merged.course} - ${merged.courseName||''}`,
+              sessionYear: merged.year, sessionType: merged.type, sessionStartTime: merged.startTime,
+              sessionDate: merged.date, sessionWeek: merged.week,
+              changedFields: changes.map(c => ({ fieldLabel: c.fieldLabel, oldValue: c.oldValue, newValue: c.newValue })),
+              changedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            });
+          }
+        });
+        try { await batch.commit(); updated += chunk.length; }
+        catch (err) { console.error('[Batch import update error]', err); failed += chunk.length; }
+      }
+
+      if (failed === 0) {
+        statusEl.className='save-status success';
+        statusEl.textContent = `${created} created, ${updated} updated ✓`;
+        showToast(`${created} new sessions, ${updated} enriched`);
+        setTimeout(closeForm, 1400);
+      } else {
+        statusEl.className='save-status error';
+        statusEl.textContent = `${created} created, ${updated} updated, ${failed} failed — check console`;
+        showToast(`${failed} rows failed`, true);
+        btn.disabled = false;
+      }
     };
   }
 
   // ════════════════════════════════════════════════════════════
   // EXPORTS — Master (Excel/CSV/ICS) + Filtered (Excel/CSV/ICS/PDF)
   // ════════════════════════════════════════════════════════════
-  const EXPORT_HEADERS = ['Week','Date Range','Date','Day','Year','Start Time','End Time','Course','Course Name','Type','Topic','Room','Primary Instructor','Secondary Instructor','Finalized Instructors','Notes'];
+  const EXPORT_HEADERS = ['Week','Date Range','Date','Day','Year','Start Time','End Time','Course','Course Name','Type','Group','Topic','Room','Primary Instructor','Secondary Instructor','Finalized Instructors','Notes'];
   function sessionToRow(s) {
-    return [s.week||'', s.dateRange||'', s.date||'', s.day||'', s.year||'', s.startTime||'', s.endTime||'', s.course||'', s.courseName||'', s.type||'', s.topic||'', getRoom(s), s.primaryInstructor||'', s.secondaryInstructor||'', s.finalizedInstructors||'', s.notes||''];
+    return [s.week||'', s.dateRange||'', s.date||'', s.day||'', s.year||'', s.startTime||'', s.endTime||'', s.course||'', s.courseName||'', s.type||'', s.group||'', s.topic||'', getRoom(s), s.primaryInstructor||'', s.secondaryInstructor||'', s.finalizedInstructors||'', s.notes||''];
   }
   function sortedRows(data) { return [...data].sort((a,b) => (a.date||'').localeCompare(b.date||'') || (a.startTime||'').localeCompare(b.startTime||'')); }
 
