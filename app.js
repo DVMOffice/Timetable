@@ -641,7 +641,9 @@
       return { topic, instructor: [primary, secondary ? `(${secondary})` : ''].filter(Boolean).join(' ') };
     });
 
-    const srlList = srl.map(i => ({ topic: i.topic, instructor: shortInstructorName(i.primaryInstructor, i.primaryInstructorDisplay) }));
+    const srlSeen = new Set();
+    const srlList = [];
+    srl.forEach(i => { if (!srlSeen.has(i.topic)) { srlSeen.add(i.topic); srlList.push({ topic: i.topic, instructor: shortInstructorName(i.primaryInstructor, i.primaryInstructorDisplay) }); } });
 
     return {
       start: t.start, end: t.end, isLabTile: true,
@@ -1012,7 +1014,7 @@
       const key = `${s.topic}||${s.primaryInstructor||''}||${s.secondaryInstructor||''}`;
       if (!stationMap.has(key)) {
         stationMap.set(key, {
-          topic: s.topic, room: getRoom(s),
+          topic: s.topic, room: getRoom(s), firstRow: s,
           instructorLabel: [s.primaryInstructor, s.secondaryInstructor ? `(${s.secondaryInstructor})` : ''].filter(Boolean).join(' '),
           cellsBySlot: new Map(),
         });
@@ -1023,10 +1025,11 @@
       st.cellsBySlot.get(slotKey).push(s);
     });
     const stations = [...stationMap.values()];
+    const editableClass = isAdmin ? 'lab-matrix-editable' : '';
 
     if (!withTimeColumns) {
       // SRL section — no time columns, students can take it anytime that day
-      const bodyRows = stations.map(st => `<tr>
+      const bodyRows = stations.map(st => `<tr class="${editableClass}" data-edit-id="${st.firstRow.id}">
         <td class="lab-matrix-station">${escapeHtml(st.topic||'')}<div class="lab-matrix-instructor">${escapeHtml(st.instructorLabel||'')}</div></td>
         <td class="lab-matrix-room">${escapeHtml(st.room||'')}</td>
       </tr>`).join('');
@@ -1047,7 +1050,7 @@
         const key = `${sl.start}|${sl.end}`;
         const matches = st.cellsBySlot.get(key) || [];
         if (!matches.length) return `<td class="lab-matrix-empty"></td>`;
-        return `<td>${matches.map(m => renderGroupBadge(m.group)).join(' ')}</td>`;
+        return `<td>${matches.map(m => `<span class="${editableClass}" data-edit-id="${m.id}">${renderGroupBadge(m.group)}</span>`).join(' ')}</td>`;
       }).join('');
       return `<tr>
         <td class="lab-matrix-station">${escapeHtml(st.topic||'')}<div class="lab-matrix-instructor">${escapeHtml(st.instructorLabel||'')}</div></td>
@@ -1093,7 +1096,7 @@
         <button class="modal-close" id="modal-close">✕</button>
         <div class="modal-header">
           <div class="modal-title">🧪 ${escapeHtml(courses.join(' / '))}</div>
-          <div class="modal-subtitle">${escapeHtml(sample.day||'')}, ${fmtDetailDate(sample.date)} · ${escapeHtml(semWeekLabel)}</div>
+          <div class="modal-subtitle">${escapeHtml(sample.day||'')}, ${fmtDetailDate(sample.date)} · ${escapeHtml(semWeekLabel)}${isAdmin ? ' · <span style="color:var(--accent);font-weight:600">Admin: click any cell or row to edit it</span>' : ''}</div>
         </div>
         <div class="modal-body">
           ${sections}
@@ -1109,6 +1112,15 @@
     document.getElementById('modal-close').onclick = closeForm;
     document.getElementById('modal-backdrop').onclick = closeForm;
     document.getElementById('detail-close-btn').onclick = closeForm;
+    if (isAdmin) {
+      modal.querySelectorAll('.lab-matrix-editable').forEach(el => {
+        el.addEventListener('click', e => {
+          e.stopPropagation();
+          const target = allSessions.find(s => s.id === el.dataset.editId);
+          if (target) openForm(target);
+        });
+      });
+    }
   }
 
   // ════════════════════════════════════════════════════════════
@@ -1154,6 +1166,10 @@
               </div>
               <div class="form-field"><label class="form-label">Start Time</label><input type="time" class="form-input" id="f-start" value="${session.startTime||''}" /></div>
               <div class="form-field"><label class="form-label">End Time</label><input type="time" class="form-input" id="f-end" value="${session.endTime||''}" /></div>
+              ${session.type==='LAB' || session.room || session.group ? `
+              <div class="form-field"><label class="form-label">Room</label><input type="text" class="form-input" id="f-room" value="${escapeHtml(session.room||'')}" placeholder="e.g. CSB Wards" /></div>
+              <div class="form-field"><label class="form-label">Group</label><input type="text" class="form-input" id="f-group" value="${escapeHtml(session.group||'')}" placeholder="e.g. A, B or All" /></div>
+              ` : ''}
               <div class="form-field full"><label class="form-label">Topic</label><input type="text" class="form-input" id="f-topic" value="${escapeHtml(session.topic||'')}" /></div>
               <div class="form-field"><label class="form-label">Primary Instructor</label><input type="text" class="form-input" id="f-primary" value="${escapeHtml(session.primaryInstructor||'')}" /></div>
               <div class="form-field"><label class="form-label">Secondary Instructor</label><input type="text" class="form-input" id="f-secondary" value="${escapeHtml(session.secondaryInstructor||'')}" /></div>
@@ -1236,6 +1252,9 @@
       notes: document.getElementById('f-notes').value.trim(),
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     };
+    const roomField = document.getElementById('f-room'), groupField = document.getElementById('f-group');
+    if (roomField) data.room = roomField.value.trim();
+    if (groupField) data.group = groupField.value.trim();
     delete data.id;
 
     saveBtn.disabled = true;
@@ -1318,6 +1337,8 @@
         <button id="fix-lab-years-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔍 Fix Lab Year Duplicates</button>
         <button id="reset-practicum-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔄 Reset 211/311</button>
         <button id="fix-aug28-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🩹 Fix Aug 28 Time</button>
+        <button id="fix-aug24-26-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🩹 Fix Aug 24-26 (200)</button>
+        <button id="dedupe-exact-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔍 Find Duplicate Sessions</button>
         <button id="cleanup-wide-srl-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🧹 Remove Wide-Range SRL Duplicates</button>
         <button id="import-csv-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>
       </span>`;
@@ -1328,6 +1349,8 @@
     document.getElementById('fix-lab-years-btn').addEventListener('click', diagnoseAndFixLabYears);
     document.getElementById('reset-practicum-btn').addEventListener('click', resetPracticumCourses);
     document.getElementById('fix-aug28-btn').addEventListener('click', fixMalformedAug28Row);
+    document.getElementById('fix-aug24-26-btn').addEventListener('click', fixAug24to26Course200);
+    document.getElementById('dedupe-exact-btn').addEventListener('click', findAndFixExactDuplicates);
   }
 
   // One-time cleanup: the *correct* SRL data is the original 1-hour entries
@@ -1460,6 +1483,84 @@
       await db.collection(SESSIONS_COL).doc(row.id).set({ startTime: '13:15', endTime: '16:30', updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
       showToast('Fixed Aug 28 session time');
     } catch (err) { console.error('[Aug28 fix error]', err); showToast('Failed to fix — check console', true); }
+  }
+
+  // General-purpose exact-duplicate finder — broader than the earlier
+  // Year-specific tool. Some CSV imports over the past several rounds
+  // occasionally failed to match an existing row and created a new one
+  // instead, leaving true duplicates scattered across various courses
+  // (not just the ones already checked). Groups by (course, type, date,
+  // start time, topic, primary instructor) — including topic/instructor
+  // avoids false positives on legitimate same-time multi-station rotations
+  // — and keeps only the earliest-created copy of each exact duplicate.
+  async function findAndFixExactDuplicates() {
+    const groups = new Map();
+    allSessions.forEach(s => {
+      const key = [s.course, s.type, s.date, s.startTime, s.topic, s.primaryInstructor||''].join('|');
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(s);
+    });
+    const toDelete = [];
+    let dupGroups = 0;
+    groups.forEach(rows => {
+      if (rows.length < 2) return;
+      dupGroups++;
+      const sorted = [...rows].sort((a,b) => {
+        const at = a.createdAt?.toMillis ? a.createdAt.toMillis() : Infinity;
+        const bt = b.createdAt?.toMillis ? b.createdAt.toMillis() : Infinity;
+        return at - bt;
+      });
+      sorted.slice(1).forEach(r => toDelete.push(r));
+    });
+
+    if (!toDelete.length) { showToast('No exact duplicate sessions found'); return; }
+    if (!confirm(`Found ${dupGroups} duplicated session(s) — ${toDelete.length} extra row(s) will be removed, keeping the earliest copy of each. Proceed?`)) return;
+
+    const BATCH_SIZE = 150; let deleted = 0;
+    for (let i = 0; i < toDelete.length; i += BATCH_SIZE) {
+      const chunk = toDelete.slice(i, i + BATCH_SIZE);
+      const batch = db.batch();
+      chunk.forEach(s => batch.delete(db.collection(SESSIONS_COL).doc(s.id)));
+      try { await batch.commit(); deleted += chunk.length; } catch (err) { console.error('[Exact dedupe error]', err); }
+    }
+    showToast(`Removed ${deleted} exact duplicate rows`);
+  }
+
+  // One-time consolidation: 200 (Aug 24-26) was imported as fragmented
+  // hourly-block placeholder rows (a leftover of the original master-list
+  // format). Replaces them with clean, correctly-spanning entries.
+  async function fixAug24to26Course200() {
+    const targets = allSessions.filter(s => String(s.course)==='200' && ['2026-08-24','2026-08-25','2026-08-26'].includes(s.date));
+    if (!targets.length) { showToast('No matching Aug 24-26 rows found — may already be fixed'); return; }
+
+    const camp = 'Nanci Bond, Crystal Makwana, Tracie Unrau, Alexandre Ellis';
+    const newRows = [
+      { date: '2026-08-24', startTime: '08:30', endTime: '16:30', type: 'LAB', topic: 'Sundre Orientation Camp (Full Day)', primaryInstructor: camp, finalizedInstructors: camp },
+      { date: '2026-08-25', startTime: '08:30', endTime: '16:30', type: 'LAB', topic: 'Sundre Orientation Camp (Full Day)', primaryInstructor: camp, finalizedInstructors: camp },
+      { date: '2026-08-26', startTime: '08:30', endTime: '11:30', type: 'LEC', topic: 'Welcome to your Academic Journey (Multiple Sessions, Full Day)', primaryInstructor: 'John Remnant', finalizedInstructors: 'John Remnant' },
+      { date: '2026-08-26', startTime: '13:30', endTime: '14:30', type: 'LEC', topic: 'Welcome to your Academic Journey (Multiple Sessions, Full Day)', primaryInstructor: 'Tessa Baker', finalizedInstructors: 'Tessa Baker' },
+      { date: '2026-08-26', startTime: '14:30', endTime: '16:30', type: 'LEC', topic: 'Welcome to your Academic Journey (Multiple Sessions, Full Day)', primaryInstructor: '', finalizedInstructors: '' },
+    ].map(r => ({
+      ...r, course: '200', courseName: 'Introduction to Veterinary Medicine', courseDept: 'VTMD', year: '1',
+      day: calcDayName(r.date), week: calcSemesterWeek(r.date).week,
+      dateRange: weekRangeLabelSem('fall', calcSemesterWeek(r.date).week), academicCycle: '2026-2027',
+    }));
+
+    if (!confirm(`This will delete ${targets.length} existing Aug 24-26 (course 200) rows and replace them with ${newRows.length} clean consolidated entries. Proceed?`)) return;
+
+    const batch1 = db.batch();
+    targets.forEach(s => batch1.delete(db.collection(SESSIONS_COL).doc(s.id)));
+    try { await batch1.commit(); } catch (err) { console.error('[Aug24-26 delete error]', err); showToast('Failed during delete — check console', true); return; }
+
+    const batch2 = db.batch();
+    newRows.forEach(row => {
+      const ref = db.collection(SESSIONS_COL).doc();
+      const data = { ...row, createdAt: firebase.firestore.FieldValue.serverTimestamp(), updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
+      batch2.set(ref, data);
+      batch2.set(db.collection(HISTORY_COL).doc(), { sessionId: ref.id, ...data, savedAt: firebase.firestore.FieldValue.serverTimestamp() });
+    });
+    try { await batch2.commit(); showToast(`Replaced ${targets.length} rows with ${newRows.length} clean entries`); }
+    catch (err) { console.error('[Aug24-26 create error]', err); showToast('Failed during create — check console', true); }
   }
 
   // ════════════════════════════════════════════════════════════
