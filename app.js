@@ -638,7 +638,7 @@
         const posStyle = `top:${topPct}%;height:${heightPct}%;left:calc(${lane*laneWidth}% + 2px);width:calc(${laneWidth}% - 4px)`;
 
         if (cluster.isLabTile) {
-          html += `<div class="tg-block tg-lab-tile" style="${posStyle}" data-labgroup="${escapeHtml(cluster.labGroupId)}" data-column="${escapeHtml(cluster.column||'')}">
+          html += `<div class="tg-block tg-lab-tile ${colorsOn?'':'colors-off'}" style="${posStyle}" data-labgroup="${escapeHtml(cluster.labGroupId)}" data-column="${escapeHtml(cluster.column||'')}">
             <div class="tg-block-l1">${escapeHtml(cluster.course||'')} ${escapeHtml(cluster.type||'')}</div>
             <div class="tg-block-l2">${escapeHtml(cluster.topics.join(' / '))}</div>
             <div class="tg-block-l3">${escapeHtml(cluster.instructors.join(', '))}</div>
@@ -1208,6 +1208,8 @@
     banner.style.cssText = `display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 16px;border-radius:8px;margin-bottom:12px;font-size:12.5px;border:1px solid #BFDBFE;background:#EFF6FF;color:#1E40AF;`;
     banner.innerHTML = `<span>⚙ <strong>Admin mode active</strong> — click any session to view and edit it.</span>
       <span style="display:flex;gap:8px">
+        <button id="fix-lab-years-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔍 Fix Lab Year Duplicates</button>
+        <button id="reset-practicum-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔄 Reset 211/311</button>
         <button id="cleanup-wide-srl-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🧹 Remove Wide-Range SRL Duplicates</button>
         <button id="import-csv-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>
       </span>`;
@@ -1215,6 +1217,8 @@
     col.insertBefore(banner, col.firstChild);
     document.getElementById('import-csv-btn').addEventListener('click', openImportModal);
     document.getElementById('cleanup-wide-srl-btn').addEventListener('click', cleanupWideSrlDuplicates);
+    document.getElementById('fix-lab-years-btn').addEventListener('click', diagnoseAndFixLabYears);
+    document.getElementById('reset-practicum-btn').addEventListener('click', resetPracticumCourses);
   }
 
   // One-time cleanup: the *correct* SRL data is the original 1-hour entries
@@ -1238,6 +1242,100 @@
       try { await batch.commit(); done += chunk.length; } catch (err) { console.error('[Wide SRL cleanup error]', err); }
     }
     showToast(`Removed ${done} wide-range duplicate SRL rows`);
+  }
+
+  // One-time fix: some earlier CSV year-corrections apparently failed to
+  // match an existing row and created a new one instead of updating it,
+  // leaving both the old (wrong-Year) and new (correct-Year) copy of the
+  // same real session in the database. This scans live data for exactly
+  // that pattern — 2+ sessions sharing (course, type, date, start time) —
+  // keeps the one with the correct target Year, and removes the rest. It
+  // also catches the simpler case (single row, never got updated at all).
+  const LAB_TARGET_YEAR = { '505': '3', '304': '2', '306': '2', '308': '2', '315': '2', '317': '2', '319': '2' };
+  async function diagnoseAndFixLabYears() {
+    const relevant = allSessions.filter(s => LAB_TARGET_YEAR[String(s.course)] && s.type === 'LAB');
+    const groups = new Map();
+    relevant.forEach(s => {
+      const key = `${s.course}|${s.type}|${s.date}|${s.startTime}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(s);
+    });
+
+    const toDelete = [], toUpdate = [];
+    let duplicateGroups = 0;
+    groups.forEach(rows => {
+      const targetYear = LAB_TARGET_YEAR[String(rows[0].course)];
+      if (rows.length > 1) {
+        duplicateGroups++;
+        const correct = rows.find(r => String(r.year) === targetYear);
+        const keep = correct || rows[0];
+        rows.forEach(r => { if (r.id !== keep.id) toDelete.push(r); });
+        if (!correct || String(keep.year) !== targetYear) toUpdate.push(keep);
+      } else if (String(rows[0].year) !== targetYear) {
+        toUpdate.push(rows[0]);
+      }
+    });
+
+    if (!toDelete.length && !toUpdate.length) { showToast('No lab-year issues found — everything looks correct'); return; }
+    const summary = `Found ${duplicateGroups} duplicated session(s) (${toDelete.length} extra rows to remove) and ${toUpdate.length} row(s) with the wrong Year to correct. Proceed?`;
+    if (!confirm(summary)) return;
+
+    const BATCH_SIZE = 150; let deleted = 0, updated = 0;
+    for (let i = 0; i < toDelete.length; i += BATCH_SIZE) {
+      const chunk = toDelete.slice(i, i + BATCH_SIZE);
+      const batch = db.batch();
+      chunk.forEach(s => batch.delete(db.collection(SESSIONS_COL).doc(s.id)));
+      try { await batch.commit(); deleted += chunk.length; } catch (err) { console.error('[Lab year dedupe error]', err); }
+    }
+    for (let i = 0; i < toUpdate.length; i += BATCH_SIZE) {
+      const chunk = toUpdate.slice(i, i + BATCH_SIZE);
+      const batch = db.batch();
+      chunk.forEach(s => batch.set(db.collection(SESSIONS_COL).doc(s.id), { year: LAB_TARGET_YEAR[String(s.course)], updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true }));
+      try { await batch.commit(); updated += chunk.length; } catch (err) { console.error('[Lab year fix error]', err); }
+    }
+    showToast(`Removed ${deleted} duplicate rows, corrected ${updated} Year values`);
+  }
+
+  // One-time reset: 211 and 311 (practicum block weeks) were imported as
+  // hour-by-hour placeholder blocks ("TBD" repeated all day, every day).
+  // This deletes every 211/311 session entirely and replaces them with one
+  // clean full-day (8:30-16:30) entry per weekday for their actual block week.
+  async function resetPracticumCourses() {
+    const existing = allSessions.filter(s => ['211','311'].includes(String(s.course)));
+    const newRows = [
+      ...['2027-02-08','2027-02-09','2027-02-10','2027-02-11','2027-02-12'].map(date => ({
+        course: '211', courseName: 'Practical Work Experience I', courseDept: 'VTMD', year: '1', type: 'LEC',
+        date, day: calcDayName(date), startTime: '08:30', endTime: '16:30',
+        topic: 'Practical Work Experience I', primaryInstructor: 'TBD', finalizedInstructors: 'TBD',
+        week: calcSemesterWeek(date).week, dateRange: weekRangeLabelSem('winter', calcSemesterWeek(date).week),
+        academicCycle: '2026-2027',
+      })),
+      ...['2027-02-22','2027-02-23','2027-02-24','2027-02-25','2027-02-26'].map(date => ({
+        course: '311', courseName: 'Practical Work Experience II', courseDept: 'VTMD', year: '2', type: 'LEC',
+        date, day: calcDayName(date), startTime: '08:30', endTime: '16:30',
+        topic: 'Practical Work Experience II', primaryInstructor: 'TBD', finalizedInstructors: 'TBD',
+        week: calcSemesterWeek(date).week, dateRange: weekRangeLabelSem('winter', calcSemesterWeek(date).week),
+        academicCycle: '2026-2027',
+      })),
+    ];
+    if (!confirm(`This will delete all ${existing.length} existing 211/311 sessions and replace them with 10 clean full-day entries (5 for 211, Feb 8-12; 5 for 311, Feb 22-26). Proceed?`)) return;
+
+    const BATCH_SIZE = 150; let deleted = 0;
+    for (let i = 0; i < existing.length; i += BATCH_SIZE) {
+      const chunk = existing.slice(i, i + BATCH_SIZE);
+      const batch = db.batch();
+      chunk.forEach(s => batch.delete(db.collection(SESSIONS_COL).doc(s.id)));
+      try { await batch.commit(); deleted += chunk.length; } catch (err) { console.error('[Practicum reset delete error]', err); }
+    }
+    const batch = db.batch();
+    newRows.forEach(row => {
+      const ref = db.collection(SESSIONS_COL).doc();
+      const data = { ...row, createdAt: firebase.firestore.FieldValue.serverTimestamp(), updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
+      batch.set(ref, data);
+      batch.set(db.collection(HISTORY_COL).doc(), { sessionId: ref.id, ...data, savedAt: firebase.firestore.FieldValue.serverTimestamp() });
+    });
+    try { await batch.commit(); showToast(`Removed ${deleted} old rows, created ${newRows.length} clean entries`); }
+    catch (err) { console.error('[Practicum reset create error]', err); showToast('Failed to create replacement rows — check console', true); }
   }
 
   // ════════════════════════════════════════════════════════════
