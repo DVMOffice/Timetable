@@ -265,14 +265,18 @@ select, input, textarea { font-family: inherit; color: inherit; }
 .tg-block:hover { filter: brightness(.96); box-shadow: var(--shadow-md); z-index: 5; }
 .tg-block.colors-off { background: var(--surface-2) !important; border-left-color: var(--border-2) !important; }
 .tg-block-l1 { font-size: 10.5px; font-weight: 700; color: var(--text); line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tg-block-l2 { font-size: 9.5px; color: var(--text-2); line-height: 1.25; margin-top: 1px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.tg-block-l3 { font-size: 9px; color: var(--text-3); font-weight: 600; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tg-block-l2 { font-size: 9.5px; color: var(--text-2); line-height: 1.25; margin-top: 1px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; }
+.tg-block-l3 { font-size: 9px; color: var(--text-3); font-weight: 600; margin-top: 1px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; white-space: normal; }
 
 /* ── Lab rotation tile (collapsed multi-row labGroupId block) ─────────── */
-.tg-lab-tile { background: #FFF8E8; border-left-color: #D9A441; }
-.tg-lab-tile .tg-block-l1 { color: #8A5A00; }
+.tg-lab-tile { background: #FFF8E8; border-left-color: #D9A441; overflow-y: auto; }
+.tg-lab-tile .tg-block-l1 { color: #8A5A00; flex-shrink: 0; }
 .tg-lab-tile.colors-off .tg-block-l1 { color: var(--text); }
-.tg-lab-tile .tg-block-l2 { -webkit-line-clamp: 2; display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; }
+.tg-lab-tile-body { margin-top: 3px; }
+.tg-lab-section { margin-bottom: 6px; }
+.tg-lab-section:last-child { margin-bottom: 0; }
+.tg-lab-line-bold { font-size: 10px; font-weight: 700; color: var(--text); line-height: 1.3; white-space: normal; }
+.tg-lab-line { font-size: 9.5px; color: var(--text-2); line-height: 1.3; white-space: normal; margin-top: 1px; }
 
 /* ── Group badges (exact hex from source Group Colors reference) ──────── */
 .group-badge {
@@ -454,4 +458,25 @@ select, input, textarea { font-family: inherit; color: inherit; }
   .modal-box { width: 96vw !important; }
   .tg-body { height: 56vh; min-height: 320px; }
   .cal-toolbar { flex-wrap: wrap; }
+
+  /* Filter panel becomes collapsible — hidden by default so the calendar
+     gets the screen real estate on small devices */
+  .filter-toggle-btn {
+    display: flex; align-items: center; justify-content: space-between; width: 100%;
+    padding: 9px 14px; font-size: 12.5px; font-weight: 700; color: var(--text-2);
+    background: var(--surface); border: none; border-bottom: 1px solid var(--border);
+  }
+  #filter-bar-inner { display: none; }
+  .filter-bar-wrap.expanded #filter-bar-inner { display: flex; }
+  .filter-bar-wrap.expanded .filter-toggle-btn { border-bottom: 1px solid var(--border); }
+
+  /* Bottom bar shrinks to reclaim vertical space */
+  .bottom-bar { height: 34px; padding: 0 10px; }
+  .admin-login-btn { padding: 3px 10px; font-size: 10.5px; }
+  .conn-status { font-size: 10px; }
+  .btn-icon { width: 24px; height: 24px; font-size: 11px; }
+  body { padding-bottom: 34px; }
+}
+@media (min-width: 769px) {
+  .filter-toggle-btn { display: none; }
 }
