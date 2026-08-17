@@ -271,6 +271,7 @@ select, input, textarea { font-family: inherit; color: inherit; }
 /* ── Lab rotation tile (collapsed multi-row labGroupId block) ─────────── */
 .tg-lab-tile { background: #FFF8E8; border-left-color: #D9A441; }
 .tg-lab-tile .tg-block-l1 { color: #8A5A00; }
+.tg-lab-tile.colors-off .tg-block-l1 { color: var(--text); }
 .tg-lab-tile .tg-block-l2 { -webkit-line-clamp: 2; display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; }
 
 /* ── Group badges (exact hex from source Group Colors reference) ──────── */
