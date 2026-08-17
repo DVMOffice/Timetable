@@ -851,15 +851,34 @@
   // ════════════════════════════════════════════════════════════
   // CALENDAR NAVIGATION
   // ════════════════════════════════════════════════════════════
+  // When a specific Week filter is active, keep it in sync with whatever
+  // week the calendar is actually showing — otherwise navigating with the
+  // arrows leaves the filter pointing at the old week and the view goes
+  // blank (nothing matches the stale week number anymore).
+  function syncWeekFilterToCalDate() {
+    if (calView !== 'week' || filters.week === 'all') return;
+    const days = buildWeekDays(calDate);
+    const sw = calcSemesterWeek(dateKey(days[0]));
+    if (sw.semester !== currentSemester) {
+      currentSemester = sw.semester;
+      document.querySelectorAll('#semester-btn-row .pill-btn').forEach(b => b.classList.toggle('active', b.dataset.semester===sw.semester));
+    }
+    filters.week = String(sw.week);
+    filters.weekSemester = sw.semester;
+    populateWeekButtons();
+  }
+
   document.getElementById('cal-prev').addEventListener('click', () => {
     calDate = calView==='month' ? new Date(calDate.getFullYear(),calDate.getMonth()-1,1) : addDays(calDate,-7);
+    syncWeekFilterToCalDate();
     renderCalendar();
   });
   document.getElementById('cal-next').addEventListener('click', () => {
     calDate = calView==='month' ? new Date(calDate.getFullYear(),calDate.getMonth()+1,1) : addDays(calDate,7);
+    syncWeekFilterToCalDate();
     renderCalendar();
   });
-  document.getElementById('cal-today').addEventListener('click', () => { calDate = new Date(); renderCalendar(); });
+  document.getElementById('cal-today').addEventListener('click', () => { calDate = new Date(); syncWeekFilterToCalDate(); renderCalendar(); });
   document.getElementById('cal-month-btn').addEventListener('click', () => {
     calView='month';
     document.getElementById('cal-month-btn').classList.add('active');
