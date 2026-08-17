@@ -581,22 +581,74 @@
     return clusters;
   }
 
-  // Group same-day sessions that share a labGroupId (+column) into one
-  // rotation tile — this is what turns a rotation's individual rows (one per
-  // time-slot × station) into a single compact calendar block.
+  // Group same-day, same-course sessions that carry a labGroupId into
+  // compact tiles. Rather than matching an exact labGroupId+column string
+  // (different sections of one lab day — whole-class intro, color rotation,
+  // SRL — can carry different labGroupId suffixes), this groups by course
+  // first, then splits into separate tiles only where a real time gap
+  // exists (e.g. a lunch break) — so continuous/overlapping content from
+  // any labGroupId variant merges into one tile, while genuinely separate
+  // time blocks (like a Block Week's AM vs PM session) stay apart.
   function buildLabTiles(events) {
-    const groups = new Map();
+    const byCourse = new Map();
     events.filter(ev => ev.labGroupId).forEach(ev => {
-      const key = `${ev.labGroupId}|${ev.column||''}`;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(ev);
+      if (!byCourse.has(ev.course)) byCourse.set(ev.course, []);
+      byCourse.get(ev.course).push(ev);
     });
-    return [...groups.values()].map(items => {
-      const start = Math.min(...items.map(i=>i._start)), end = Math.max(...items.map(i=>i._end));
-      const topics = [...new Set(items.map(i => i.topic).filter(Boolean))];
-      const instructors = [...new Set(items.flatMap(i => [shortInstructorName(i.primaryInstructor,i.primaryInstructorDisplay), shortInstructorName(i.secondaryInstructor,i.secondaryInstructorDisplay)]).filter(Boolean))];
-      return { start, end, isLabTile: true, labGroupId: items[0].labGroupId, column: items[0].column, course: items[0].course, type: items[0].type, topics, instructors, items };
+
+    const NOON_MIN = 12 * 60;
+    const tiles = [];
+    byCourse.forEach(items => {
+      // "Block Week" style days (labGroupId prefixed BlockWeek) explicitly
+      // split into a morning and afternoon session; every other lab course
+      // merges its entire day into one tile regardless of internal gaps
+      // (e.g. a lunch break inside a rotation should NOT split the tile).
+      const isBlockWeek = items.some(i => String(i.labGroupId||'').startsWith('BlockWeek'));
+      if (isBlockWeek) {
+        const am = items.filter(i => i._start < NOON_MIN);
+        const pm = items.filter(i => i._start >= NOON_MIN);
+        [am, pm].forEach(group => {
+          if (!group.length) return;
+          tiles.push({ start: Math.min(...group.map(i=>i._start)), end: Math.max(...group.map(i=>i._end)), items: group });
+        });
+      } else {
+        tiles.push({ start: Math.min(...items.map(i=>i._start)), end: Math.max(...items.map(i=>i._end)), items });
+      }
     });
+
+    return tiles.map(t => summarizeLabTile(t));
+  }
+
+  function isWholeClass(s) { return String(s.group||'').trim().toLowerCase() === 'all'; }
+
+  function summarizeLabTile(t) {
+    const items = t.items;
+    const hasLab = items.some(i => i.type === 'LAB');
+    const labelType = hasLab ? 'LAB' : items[0].type;
+
+    const wholeClass = items.filter(i => i.type !== 'SRL' && isWholeClass(i)).sort((a,b) => a._start - b._start);
+    const rotation = items.filter(i => i.type !== 'SRL' && !isWholeClass(i));
+    const srl = items.filter(i => i.type === 'SRL').sort((a,b) => a._start - b._start);
+
+    const wholeClassInstructors = [...new Set(wholeClass.flatMap(i => [shortInstructorName(i.primaryInstructor,i.primaryInstructorDisplay), shortInstructorName(i.secondaryInstructor,i.secondaryInstructorDisplay)]).filter(Boolean))];
+
+    const stationOrder = []; const seenStation = new Set();
+    rotation.forEach(i => { if (!seenStation.has(i.topic)) { seenStation.add(i.topic); stationOrder.push(i.topic); } });
+    const rotationStations = stationOrder.map(topic => {
+      const row = rotation.find(i => i.topic === topic);
+      const primary = shortInstructorName(row.primaryInstructor, row.primaryInstructorDisplay);
+      const secondary = shortInstructorName(row.secondaryInstructor, row.secondaryInstructorDisplay);
+      return { topic, instructor: [primary, secondary ? `(${secondary})` : ''].filter(Boolean).join(' ') };
+    });
+
+    const srlList = srl.map(i => ({ topic: i.topic, instructor: shortInstructorName(i.primaryInstructor, i.primaryInstructorDisplay) }));
+
+    return {
+      start: t.start, end: t.end, isLabTile: true,
+      course: items[0].course, type: labelType,
+      wholeClassTopics: wholeClass.map(i => i.topic), wholeClassInstructors,
+      rotationStations, srlList, items,
+    };
   }
 
   function renderWeekView(container, days, data) {
@@ -638,11 +690,45 @@
         const posStyle = `top:${topPct}%;height:${heightPct}%;left:calc(${lane*laneWidth}% + 2px);width:calc(${laneWidth}% - 4px)`;
 
         if (cluster.isLabTile) {
-          html += `<div class="tg-block tg-lab-tile ${colorsOn?'':'colors-off'}" style="${posStyle}" data-labgroup="${escapeHtml(cluster.labGroupId)}" data-column="${escapeHtml(cluster.column||'')}">
-            <div class="tg-block-l1">${escapeHtml(cluster.course||'')} ${escapeHtml(cluster.type||'')}</div>
-            <div class="tg-block-l2">${escapeHtml(cluster.topics.join(' / '))}</div>
-            <div class="tg-block-l3">${escapeHtml(cluster.instructors.join(', '))}</div>
-          </div>`;
+          if (cluster.items.length === 1) {
+            // A tile that ended up with just one row (e.g. a standalone
+            // whole-class session with nothing else nearby in time) reads
+            // better as a plain simple block, same as any LEC/SRL card.
+            const s = cluster.items[0];
+            const color = colorsOn ? getCourseColor(s.course) : null;
+            const style = colorsOn ? `${posStyle};background:${color.bg};border-left-color:${color.border}` : posStyle;
+            const instrText = s.finalizedInstructors || tileInstructorNames(s) || s.primaryInstructor || '';
+            html += `<div class="tg-block ${colorsOn?'':'colors-off'}" style="${style}" data-id="${s.id}">
+              <div class="tg-block-l1">${escapeHtml(s.course||'—')} ${escapeHtml(s.type||'')}</div>
+              <div class="tg-block-l2">${escapeHtml(s.topic||'')}</div>
+              ${instrText ? `<div class="tg-block-l3">${escapeHtml(instrText)}</div>` : ''}
+            </div>`;
+          } else {
+            const ids = cluster.items.map(i => i.id).join(',');
+            let inner = '';
+            if (cluster.wholeClassTopics.length) {
+              inner += `<div class="tg-lab-section">` +
+                cluster.wholeClassTopics.map(t => `<div class="tg-lab-line-bold">${escapeHtml(t)}</div>`).join('') +
+                (cluster.wholeClassInstructors.length ? `<div class="tg-lab-line">${escapeHtml(cluster.wholeClassInstructors.join(', '))}</div>` : '') +
+                `</div>`;
+            }
+            cluster.rotationStations.forEach(st => {
+              inner += `<div class="tg-lab-section">
+                <div class="tg-lab-line-bold">${escapeHtml(st.topic)}</div>
+                ${st.instructor ? `<div class="tg-lab-line">${escapeHtml(st.instructor)}</div>` : ''}
+              </div>`;
+            });
+            cluster.srlList.forEach(s => {
+              inner += `<div class="tg-lab-section">
+                <div class="tg-lab-line-bold">SRL: ${escapeHtml(s.topic)}</div>
+                ${s.instructor ? `<div class="tg-lab-line">${escapeHtml(s.instructor)}</div>` : ''}
+              </div>`;
+            });
+            html += `<div class="tg-block tg-lab-tile ${colorsOn?'':'colors-off'}" style="${posStyle}" data-ids="${escapeHtml(ids)}">
+              <div class="tg-block-l1">${escapeHtml(cluster.course||'')} ${escapeHtml(cluster.type||'')}</div>
+              <div class="tg-lab-tile-body">${inner}</div>
+            </div>`;
+          }
         } else if (cluster.items.length === 1) {
           const s = cluster.items[0];
           const color = colorsOn ? getCourseColor(s.course) : null;
@@ -732,7 +818,7 @@
     container.querySelectorAll('.tg-lab-tile').forEach(el => {
       el.addEventListener('click', e => {
         e.stopPropagation();
-        openLabMatrixDetail(el.dataset.labgroup, el.dataset.column);
+        openLabMatrixDetail(el.dataset.ids.split(','));
       });
     });
   }
@@ -848,6 +934,7 @@
   function openDetail(session) {
     const modal = document.getElementById('modal');
     const isLab = String(session.type||'').toUpperCase() === 'LAB';
+    const showSpyHillLink = isLab && !['202','302'].includes(String(session.course));
     const sw = session.date ? calcSemesterWeek(session.date) : null;
     const semWeekLabel = sw ? `${sw.semester==='winter'?'Winter':'Fall'} Week ${sw.week}` : '';
     const instructorRows = isLab
@@ -869,7 +956,7 @@
           <div class="detail-row"><span class="detail-label">🏷️ Type</span><span class="detail-value">${escapeHtml(session.type||'')}</span></div>
           <div class="detail-row"><span class="detail-label">🎓 Year</span><span class="detail-value">Year ${escapeHtml(String(session.year||''))}</span></div>
           <div class="detail-row"><span class="detail-label">🕐 Time</span><span class="detail-value">${escapeHtml(session.startTime||'')} – ${escapeHtml(session.endTime||'')}</span></div>
-          <div class="detail-row"><span class="detail-label">📍 Room</span><span class="detail-value">${escapeHtml(getRoom(session))}${isLab ? ` &nbsp;·&nbsp; <a class="detail-lab-link" href="${SPY_HILL_URL}" target="_blank" rel="noopener">View Spy Hill Lab Schedule ↗</a>` : ''}</span></div>
+          <div class="detail-row"><span class="detail-label">📍 Room</span><span class="detail-value">${escapeHtml(getRoom(session))}${showSpyHillLink ? ` &nbsp;·&nbsp; <a class="detail-lab-link" href="${SPY_HILL_URL}" target="_blank" rel="noopener">View Spy Hill Lab Schedule ↗</a>` : ''}</span></div>
           <div class="detail-row"><span class="detail-label">📝 Topic</span><span class="detail-value">${escapeHtml(session.topic||'—')}</span></div>
           ${session.group ? `<div class="detail-row"><span class="detail-label">🧩 Group</span><span class="detail-value">${escapeHtml(session.group)}</span></div>` : ''}
           ${instructorRows}
@@ -955,8 +1042,9 @@
     </table>`;
   }
 
-  function openLabMatrixDetail(labGroupId, column) {
-    const rows = allSessions.filter(s => s.labGroupId === labGroupId && (s.column||'') === (column||''));
+  function openLabMatrixDetail(ids) {
+    const idSet = new Set(ids);
+    const rows = allSessions.filter(s => idSet.has(s.id));
     if (!rows.length) return;
     const modal = document.getElementById('modal');
 
@@ -981,7 +1069,7 @@
 
     modal.innerHTML = `
       <div class="modal-backdrop" id="modal-backdrop"></div>
-      <div class="modal-box" style="width:min(820px,95vw)">
+      <div class="modal-box" style="width:min(1100px,96vw)">
         <div class="modal-strip"></div>
         <button class="modal-close" id="modal-close">✕</button>
         <div class="modal-header">
@@ -1210,6 +1298,7 @@
       <span style="display:flex;gap:8px">
         <button id="fix-lab-years-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔍 Fix Lab Year Duplicates</button>
         <button id="reset-practicum-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔄 Reset 211/311</button>
+        <button id="fix-aug28-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🩹 Fix Aug 28 Time</button>
         <button id="cleanup-wide-srl-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🧹 Remove Wide-Range SRL Duplicates</button>
         <button id="import-csv-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>
       </span>`;
@@ -1219,6 +1308,7 @@
     document.getElementById('cleanup-wide-srl-btn').addEventListener('click', cleanupWideSrlDuplicates);
     document.getElementById('fix-lab-years-btn').addEventListener('click', diagnoseAndFixLabYears);
     document.getElementById('reset-practicum-btn').addEventListener('click', resetPracticumCourses);
+    document.getElementById('fix-aug28-btn').addEventListener('click', fixMalformedAug28Row);
   }
 
   // One-time cleanup: the *correct* SRL data is the original 1-hour entries
@@ -1336,6 +1426,21 @@
     });
     try { await batch.commit(); showToast(`Removed ${deleted} old rows, created ${newRows.length} clean entries`); }
     catch (err) { console.error('[Practicum reset create error]', err); showToast('Failed to create replacement rows — check console', true); }
+  }
+
+  // One-time fix: a single 200-course row on Aug 28 has a malformed start
+  // time (literally the text "Afternoon" with no end time), left over from
+  // the source data. Matched by topic text since the broken time value
+  // itself can't serve as a reliable match key once corrected.
+  async function fixMalformedAug28Row() {
+    const row = allSessions.find(s => String(s.course)==='200' && s.date==='2026-08-28' && s.topic==='Prep for White Coat Ceremony');
+    if (!row) { showToast('Malformed Aug 28 row not found — may already be fixed'); return; }
+    if (row.startTime === '13:15' && row.endTime === '16:30') { showToast('Already correct — nothing to fix'); return; }
+    if (!confirm(`Found the malformed row (startTime="${row.startTime}"). Set it to 13:15–16:30?`)) return;
+    try {
+      await db.collection(SESSIONS_COL).doc(row.id).set({ startTime: '13:15', endTime: '16:30', updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      showToast('Fixed Aug 28 session time');
+    } catch (err) { console.error('[Aug28 fix error]', err); showToast('Failed to fix — check console', true); }
   }
 
   // ════════════════════════════════════════════════════════════
@@ -1581,6 +1686,15 @@
       if (kind === 'filtered-pdf') window.print(); // print CSS un-clips the compressed/fixed-height grid so nothing scrolled-off is cut
       if (kind !== 'filtered-pdf') showToast('Export downloaded');
     });
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // MOBILE FILTER PANEL COLLAPSE
+  // ════════════════════════════════════════════════════════════
+  document.getElementById('filter-toggle-btn').addEventListener('click', () => {
+    const wrap = document.getElementById('filter-bar-wrap');
+    const expanded = wrap.classList.toggle('expanded');
+    document.getElementById('filter-toggle-btn').textContent = expanded ? 'Filters ▴' : 'Filters ▾';
   });
 
   // ════════════════════════════════════════════════════════════
