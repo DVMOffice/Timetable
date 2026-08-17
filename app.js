@@ -539,6 +539,13 @@
   // (e.g. a Year 2 session 10:30–11:30 and a Year 3 session 10:45–12:15,
   // especially common in the "All Years" view). Give each such bucket its
   // own side-by-side lane instead of letting them paint on top of each other.
+  // Each cluster/lab-tile's items[0] carries the real session's Year — use it
+  // as a stable rank so the same course level always lands on the same side.
+  function laneRank(item) {
+    const yr = parseInt(item.items?.[0]?.year, 10);
+    return Number.isFinite(yr) ? yr : 99; // unknown years sort last (rightmost)
+  }
+
   function assignLanes(clusters) {
     const groups = [];
     let current = null;
@@ -547,13 +554,28 @@
       else { current = { items: [c], maxEnd: c.end }; groups.push(current); }
     });
     groups.forEach(g => {
-      const laneEnds = [];
+      // Within this overlap group, process items in Year order (1, 2, 3, …)
+      // so lower years always claim the lower (left) lane numbers, regardless
+      // of which items happen to start earliest or be processed first.
+      const byRank = new Map();
       g.items.forEach(c => {
-        let lane = laneEnds.findIndex(end => end <= c.start);
-        if (lane === -1) { lane = laneEnds.length; laneEnds.push(c.end); } else { laneEnds[lane] = c.end; }
-        c.lane = lane;
+        const r = laneRank(c);
+        if (!byRank.has(r)) byRank.set(r, []);
+        byRank.get(r).push(c);
       });
-      const laneCount = laneEnds.length;
+      const ranks = [...byRank.keys()].sort((a,b) => a-b);
+      let laneOffset = 0;
+      ranks.forEach(r => {
+        const items = byRank.get(r).sort((a,b) => a.start - b.start);
+        const laneEnds = [];
+        items.forEach(c => {
+          let lane = laneEnds.findIndex(end => end <= c.start);
+          if (lane === -1) { lane = laneEnds.length; laneEnds.push(c.end); } else { laneEnds[lane] = c.end; }
+          c.lane = laneOffset + lane;
+        });
+        laneOffset += laneEnds.length;
+      });
+      const laneCount = laneOffset;
       g.items.forEach(c => c.laneCount = laneCount);
     });
     return clusters;
@@ -573,7 +595,7 @@
       const start = Math.min(...items.map(i=>i._start)), end = Math.max(...items.map(i=>i._end));
       const topics = [...new Set(items.map(i => i.topic).filter(Boolean))];
       const instructors = [...new Set(items.flatMap(i => [shortInstructorName(i.primaryInstructor,i.primaryInstructorDisplay), shortInstructorName(i.secondaryInstructor,i.secondaryInstructorDisplay)]).filter(Boolean))];
-      return { start, end, isLabTile: true, labGroupId: items[0].labGroupId, column: items[0].column, topics, instructors, items };
+      return { start, end, isLabTile: true, labGroupId: items[0].labGroupId, column: items[0].column, course: items[0].course, type: items[0].type, topics, instructors, items };
     });
   }
 
@@ -616,9 +638,8 @@
         const posStyle = `top:${topPct}%;height:${heightPct}%;left:calc(${lane*laneWidth}% + 2px);width:calc(${laneWidth}% - 4px)`;
 
         if (cluster.isLabTile) {
-          const timeLabel = `${cluster.items[0].startTime}-${(() => { const h=Math.floor(cluster.end/60), m=cluster.end%60; return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`; })()}`;
           html += `<div class="tg-block tg-lab-tile" style="${posStyle}" data-labgroup="${escapeHtml(cluster.labGroupId)}" data-column="${escapeHtml(cluster.column||'')}">
-            <div class="tg-block-l1">${escapeHtml(timeLabel)}</div>
+            <div class="tg-block-l1">${escapeHtml(cluster.course||'')} ${escapeHtml(cluster.type||'')}</div>
             <div class="tg-block-l2">${escapeHtml(cluster.topics.join(' / '))}</div>
             <div class="tg-block-l3">${escapeHtml(cluster.instructors.join(', '))}</div>
           </div>`;
@@ -628,10 +649,11 @@
           const style = colorsOn
             ? `${posStyle};background:${color.bg};border-left-color:${color.border}`
             : posStyle;
+          const instrText = s.finalizedInstructors || tileInstructorNames(s) || s.primaryInstructor || 'TBD';
           html += `<div class="tg-block ${colorsOn?'':'colors-off'}" style="${style}" data-id="${s.id}">
             <div class="tg-block-l1">${escapeHtml(s.course||'—')} ${escapeHtml(s.type||'')}</div>
             <div class="tg-block-l2">${escapeHtml(s.topic||'')}</div>
-            <div class="tg-block-l3">${escapeHtml(getRoom(s))}</div>
+            <div class="tg-block-l3">${escapeHtml(instrText)}</div>
           </div>`;
         } else {
           const MAX = 3;
@@ -877,17 +899,8 @@
   // LAB ROTATION MATRIX POPUP — reconstructs the "Second Year Lab / 505 Lab"
   // style table from all sessions sharing one labGroupId(+column).
   // ════════════════════════════════════════════════════════════
-  function openLabMatrixDetail(labGroupId, column) {
-    const rows = allSessions.filter(s => s.labGroupId === labGroupId && (s.column||'') === (column||''));
-    if (!rows.length) return;
-    const modal = document.getElementById('modal');
-
-    // Columns = distinct time slots (sorted by start time)
-    const slotMap = new Map();
-    rows.forEach(s => { const k = `${s.startTime}|${s.endTime}`; if (!slotMap.has(k)) slotMap.set(k, { start: s.startTime, end: s.endTime }); });
-    const slots = [...slotMap.values()].sort((a,b) => (a.start||'').localeCompare(b.start||''));
-
-    // Rows = distinct stations (topic + instructor combo), in first-appearance order
+  function buildMatrixTable(rows, { withTimeColumns }) {
+    if (!rows.length) return '';
     const stationMap = new Map();
     rows.forEach(s => {
       const key = `${s.topic}||${s.primaryInstructor||''}||${s.secondaryInstructor||''}`;
@@ -905,10 +918,22 @@
     });
     const stations = [...stationMap.values()];
 
-    const sample = rows[0];
-    const courses = [...new Set(rows.map(s => `${s.course} - ${s.courseName||''}`))];
-    const sw = sample.date ? calcSemesterWeek(sample.date) : null;
-    const semWeekLabel = sw ? `${sw.semester==='winter'?'Winter':'Fall'} Week ${sw.week}` : '';
+    if (!withTimeColumns) {
+      // SRL section — no time columns, students can take it anytime that day
+      const bodyRows = stations.map(st => `<tr>
+        <td class="lab-matrix-station">${escapeHtml(st.topic||'')}<div class="lab-matrix-instructor">${escapeHtml(st.instructorLabel||'')}</div></td>
+        <td class="lab-matrix-room">${escapeHtml(st.room||'')}</td>
+      </tr>`).join('');
+      return `<table class="lab-matrix-table">
+        <thead><tr><th>SRL</th><th>Room</th></tr></thead>
+        <tbody>${bodyRows}</tbody>
+      </table>`;
+    }
+
+    // Preserve slot order as first-encountered in the row data (matches source order)
+    const slotOrderMap = new Map();
+    rows.forEach(s => { const k = `${s.startTime}|${s.endTime}`; if (!slotOrderMap.has(k)) slotOrderMap.set(k, { start: s.startTime, end: s.endTime }); });
+    const slots = [...slotOrderMap.values()].sort((a,b) => (a.start||'').localeCompare(b.start||''));
 
     const headerCells = slots.map(sl => `<th>${escapeHtml(sl.start)}-${escapeHtml(sl.end)}</th>`).join('');
     const bodyRows = stations.map(st => {
@@ -924,6 +949,35 @@
         ${cells}
       </tr>`;
     }).join('');
+    return `<table class="lab-matrix-table">
+      <thead><tr><th>Station / Instructor</th><th>Room</th>${headerCells}</tr></thead>
+      <tbody>${bodyRows}</tbody>
+    </table>`;
+  }
+
+  function openLabMatrixDetail(labGroupId, column) {
+    const rows = allSessions.filter(s => s.labGroupId === labGroupId && (s.column||'') === (column||''));
+    if (!rows.length) return;
+    const modal = document.getElementById('modal');
+
+    // Split into three sections, in source order:
+    // 1) whole-class sessions (group === "All") — the morning lab intro / anatomy content
+    // 2) color-grouped rotation stations
+    // 3) SRL — no time columns, students can complete anytime that day
+    const wholeClassRows = rows.filter(s => s.type !== 'SRL' && String(s.group||'').trim().toLowerCase() === 'all');
+    const rotationRows   = rows.filter(s => s.type !== 'SRL' && String(s.group||'').trim().toLowerCase() !== 'all');
+    const srlRows        = rows.filter(s => s.type === 'SRL');
+
+    const sample = rows[0];
+    const courses = [...new Set(rows.map(s => `${s.course} - ${s.courseName||''}`))];
+    const sw = sample.date ? calcSemesterWeek(sample.date) : null;
+    const semWeekLabel = sw ? `${sw.semester==='winter'?'Winter':'Fall'} Week ${sw.week}` : '';
+
+    const sections = [
+      buildMatrixTable(wholeClassRows, { withTimeColumns: true }),
+      buildMatrixTable(rotationRows, { withTimeColumns: true }),
+      buildMatrixTable(srlRows, { withTimeColumns: false }),
+    ].filter(Boolean).map(t => `<div class="lab-matrix-wrap">${t}</div>`).join('');
 
     modal.innerHTML = `
       <div class="modal-backdrop" id="modal-backdrop"></div>
@@ -935,12 +989,7 @@
           <div class="modal-subtitle">${escapeHtml(sample.day||'')}, ${fmtDetailDate(sample.date)} · ${escapeHtml(semWeekLabel)}</div>
         </div>
         <div class="modal-body">
-          <div class="lab-matrix-wrap">
-            <table class="lab-matrix-table">
-              <thead><tr><th>Station / Instructor</th><th>Room</th>${headerCells}</tr></thead>
-              <tbody>${bodyRows}</tbody>
-            </table>
-          </div>
+          ${sections}
         </div>
         <div class="modal-footer">
           <div></div>
@@ -1158,10 +1207,37 @@
     banner.id = 'admin-banner';
     banner.style.cssText = `display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 16px;border-radius:8px;margin-bottom:12px;font-size:12.5px;border:1px solid #BFDBFE;background:#EFF6FF;color:#1E40AF;`;
     banner.innerHTML = `<span>⚙ <strong>Admin mode active</strong> — click any session to view and edit it.</span>
-      <button id="import-csv-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>`;
+      <span style="display:flex;gap:8px">
+        <button id="cleanup-wide-srl-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🧹 Remove Wide-Range SRL Duplicates</button>
+        <button id="import-csv-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>
+      </span>`;
     const col = document.querySelector('.cal-column');
     col.insertBefore(banner, col.firstChild);
     document.getElementById('import-csv-btn').addEventListener('click', openImportModal);
+    document.getElementById('cleanup-wide-srl-btn').addEventListener('click', cleanupWideSrlDuplicates);
+  }
+
+  // One-time cleanup: the *correct* SRL data is the original 1-hour entries
+  // from Phase 1. A later lab import added duplicate SRL rows using a wide
+  // display-only time range (e.g. 09:15-16:15) meant only as a visual "any
+  // time this day" indicator — those wide rows should never have been
+  // written as literal session times. This removes exactly those 44
+  // wide-range duplicates, identified by (course, date, start time),
+  // leaving the correct 1-hour originals untouched.
+  const WIDE_SRL_DUPLICATE_KEYS = [["206","2026-09-04","09:15"],["206","2026-09-04","09:15"],["206","2026-09-11","09:15"],["206","2026-09-11","09:15"],["206","2026-09-18","09:15"],["206","2026-09-18","09:15"],["206","2026-09-25","09:15"],["206","2026-09-25","09:15"],["206","2026-10-02","09:15"],["206","2026-10-02","09:15"],["206","2026-10-09","09:15"],["206","2026-10-09","09:15"],["206","2026-10-16","09:15"],["206","2026-10-23","09:15"],["206","2026-10-23","09:15"],["206","2026-10-30","09:15"],["206","2026-10-30","09:15"],["206","2026-11-06","09:15"],["206","2026-11-20","09:00"],["206","2026-11-20","09:00"],["206","2026-11-27","09:00"],["206","2026-11-27","09:00"],["217","2027-01-08","09:15"],["217","2027-01-08","09:15"],["217","2027-01-22","09:15"],["217","2027-01-22","09:15"],["217","2027-01-29","09:15"],["217","2027-02-05","09:15"],["217","2027-02-05","09:15"],["217","2027-02-26","09:15"],["217","2027-02-26","09:15"],["217","2027-03-05","09:15"],["217","2027-03-05","09:15"],["217","2027-03-12","09:15"],["217","2027-03-12","09:15"],["217","2027-03-19","09:15"],["217","2027-03-19","09:15"],["217","2027-04-02","08:30"],["217","2027-04-02","08:30"],["217","2027-04-09","08:30"],["217","2027-04-09","08:30"],["308","2026-08-31","13:30"],["308","2026-09-21","08:30"],["308","2026-09-21","10:05"]];
+  async function cleanupWideSrlDuplicates() {
+    const keySet = new Set(WIDE_SRL_DUPLICATE_KEYS.map(k => k.join('|')));
+    const matches = allSessions.filter(s => s.type === 'SRL' && keySet.has(`${s.course}|${s.date}|${s.startTime}`));
+    if (!matches.length) { showToast('No matching wide-range duplicate rows found — nothing to clean up'); return; }
+    if (!confirm(`Found ${matches.length} wide-range display-only SRL duplicates. Delete them? (The correct 1-hour original entries will remain untouched.)`)) return;
+    const BATCH_SIZE = 200; let done = 0;
+    for (let i = 0; i < matches.length; i += BATCH_SIZE) {
+      const chunk = matches.slice(i, i + BATCH_SIZE);
+      const batch = db.batch();
+      chunk.forEach(s => batch.delete(db.collection(SESSIONS_COL).doc(s.id)));
+      try { await batch.commit(); done += chunk.length; } catch (err) { console.error('[Wide SRL cleanup error]', err); }
+    }
+    showToast(`Removed ${done} wide-range duplicate SRL rows`);
   }
 
   // ════════════════════════════════════════════════════════════
@@ -1407,6 +1483,24 @@
       if (kind === 'filtered-pdf') window.print(); // print CSS un-clips the compressed/fixed-height grid so nothing scrolled-off is cut
       if (kind !== 'filtered-pdf') showToast('Export downloaded');
     });
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // SIDE PANEL (Latest Updates / Data Export) COLLAPSE TOGGLE
+  // ════════════════════════════════════════════════════════════
+  let sideCollapsed = JSON.parse(localStorage.getItem('timetable_side_collapsed') || 'false');
+  function updateSideToggleBtn() {
+    document.getElementById('main-view').classList.toggle('side-collapsed', sideCollapsed);
+    const btn = document.getElementById('side-toggle-btn');
+    btn.textContent = sideCollapsed ? '‹' : '›';
+    btn.title = sideCollapsed ? 'Show Latest Updates / Data Export panel' : 'Hide Latest Updates / Data Export panel';
+  }
+  updateSideToggleBtn();
+  document.getElementById('side-toggle-btn').addEventListener('click', () => {
+    sideCollapsed = !sideCollapsed;
+    localStorage.setItem('timetable_side_collapsed', JSON.stringify(sideCollapsed));
+    updateSideToggleBtn();
+    syncSideColumnHeight();
   });
 
   // ════════════════════════════════════════════════════════════
