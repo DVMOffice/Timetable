@@ -1496,6 +1496,7 @@
     banner.innerHTML = `<span>⚙ <strong>Admin mode active</strong> — click any session to view and edit it.</span>
       <span style="display:flex;gap:8px">
         <button id="remove-stale-200-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🧹 Remove Stale 200 Rows</button>
+        <button id="year2-diagnostic-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">📊 Export Year 2 Lab Diagnostic</button>
         <button id="aug17-updates-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">📋 Apply Aug 17 Lab Updates</button>
         <button id="import-csv-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>
       </span>`;
@@ -1503,6 +1504,7 @@
     col.insertBefore(banner, col.firstChild);
     document.getElementById('import-csv-btn').addEventListener('click', openImportModal);
     document.getElementById('remove-stale-200-btn').addEventListener('click', removeStale200Rows);
+    document.getElementById('year2-diagnostic-btn').addEventListener('click', exportYear2LabDiagnostic);
     document.getElementById('aug17-updates-btn').addEventListener('click', applyAug17LabUpdates);
   }
 
@@ -1725,6 +1727,21 @@
   // one being replaced. Removes exactly the stale rows, identified by their
   // distinctive leftover topic text, leaving the correct lab data untouched.
   const STALE_200_TOPICS = ['Biosecurity SRL & Surgical Instrument Handling', 'Classroom session & Lab Sessions', 'OFF - Prep for White Coat Ceremony'];
+  // Diagnostic: exports every live Year 2 lab session (304/306/308/315/317/319)
+  // as a CSV, sorted by course/date/startTime, with every relevant field —
+  // used to compare the actual database state against the source schedule
+  // when something looks wrong on the calendar.
+  function exportYear2LabDiagnostic() {
+    const courses = ['304','306','308','315','317','319'];
+    const rows = allSessions.filter(s => courses.includes(String(s.course))).sort((a,b) =>
+      String(a.course).localeCompare(String(b.course)) || (a.date||'').localeCompare(b.date||'') || (a.startTime||'').localeCompare(b.startTime||''));
+    const headers = ['docId','course','type','date','day','startTime','endTime','topic','group','primaryInstructor','secondaryInstructor','finalizedInstructors','labGroupId','column','room','year'];
+    const csvRows = rows.map(s => headers.map(h => h==='docId' ? s.id : (s[h]||'')));
+    const csv = [headers, ...csvRows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    downloadBlob(csv, `year2_lab_diagnostic_${dateKey(new Date())}.csv`, 'text/csv');
+    showToast(`Exported ${rows.length} Year 2 lab session rows`);
+  }
+
   async function removeStale200Rows() {
     const matches = allSessions.filter(s => String(s.course)==='200' && ['2026-08-27','2026-08-28'].includes(s.date) && STALE_200_TOPICS.includes(s.topic));
     if (!matches.length) { showToast('No stale Aug 27/28 rows found — may already be fixed'); return; }
