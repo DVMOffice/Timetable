@@ -688,7 +688,12 @@
     const labelType = hasLab ? 'LAB' : items[0].type;
 
     const wholeClass = items.filter(i => i.type !== 'SRL' && isWholeClass(i)).sort((a,b) => a._start - b._start);
-    const rotation = items.filter(i => i.type !== 'SRL' && !isWholeClass(i));
+    const rotationRaw = items.filter(i => i.type !== 'SRL' && !isWholeClass(i));
+    // Preserve the true source-file topic order via an explicit sortOrder
+    // field when present (set during import) — Firestore doesn't guarantee
+    // document order, so without this, station order can appear arbitrary.
+    const hasSortOrder = rotationRaw.length && rotationRaw.every(i => i.sortOrder != null && i.sortOrder !== '');
+    const rotation = hasSortOrder ? [...rotationRaw].sort((a,b) => Number(a.sortOrder) - Number(b.sortOrder)) : rotationRaw;
     const srl = items.filter(i => i.type === 'SRL').sort((a,b) => a._start - b._start);
 
     const wholeClassInstructors = [...new Set(wholeClass.flatMap(i => [shortInstructorName(i.primaryInstructor,i.primaryInstructorDisplay), shortInstructorName(i.secondaryInstructor,i.secondaryInstructorDisplay)]).filter(Boolean))];
@@ -1068,8 +1073,10 @@
   // LAB ROTATION MATRIX POPUP — reconstructs the "Second Year Lab / 505 Lab"
   // style table from all sessions sharing one labGroupId(+column).
   // ════════════════════════════════════════════════════════════
-  function buildMatrixTable(rows, { withTimeColumns }) {
-    if (!rows.length) return '';
+  function buildMatrixTable(rowsIn, { withTimeColumns }) {
+    if (!rowsIn.length) return '';
+    const hasSortOrder = rowsIn.every(s => s.sortOrder != null && s.sortOrder !== '');
+    const rows = hasSortOrder ? [...rowsIn].sort((a,b) => Number(a.sortOrder) - Number(b.sortOrder)) : rowsIn;
     const stationMap = new Map();
     rows.forEach(s => {
       const key = `${s.topic}||${s.primaryInstructor||''}||${s.secondaryInstructor||''}`;
@@ -1426,12 +1433,14 @@
     banner.innerHTML = `<span>⚙ <strong>Admin mode active</strong> — click any session to view and edit it.</span>
       <span style="display:flex;gap:8px">
         <button id="remove-stale-200-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🧹 Remove Stale 200 Rows</button>
+        <button id="aug17-updates-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">📋 Apply Aug 17 Lab Updates</button>
         <button id="import-csv-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>
       </span>`;
     const col = document.querySelector('.cal-column');
     col.insertBefore(banner, col.firstChild);
     document.getElementById('import-csv-btn').addEventListener('click', openImportModal);
     document.getElementById('remove-stale-200-btn').addEventListener('click', removeStale200Rows);
+    document.getElementById('aug17-updates-btn').addEventListener('click', applyAug17LabUpdates);
   }
 
   // One-time cleanup: the *correct* SRL data is the original 1-hour entries
@@ -1663,11 +1672,78 @@
     catch (err) { console.error('[Stale 200 cleanup error]', err); showToast('Failed — check console', true); }
   }
 
+  // One-time: applies the Aug 17 source-file corrections (27 targeted
+  // changes across 200/204/304/306/308/315/317/319/505 — instructor
+  // additions/corrections, 3 time-block fixes for 306, an Aug 31 time fix
+  // for 308 matching the earlier Sep 10 fix, and a room-name cleanup).
+  // Matched by (course, date, topic) rather than exact start time, since
+  // these are scattered text corrections, not structural changes — safer
+  // than guessing 27 individual start times. Also creates the two brand-new
+  // 505 rows for Jan 12, 2027, which didn't exist in the database before.
+  const AUG17_CHANGES = [{"course": "200", "date": "2026-08-27", "type": "SRL", "topic": "Biosafety SRL", "room": "Classroom"}, {"course": "204", "date": "2026-11-18", "topic": "Small Mammals", "primaryInstructor": "Vaasjo", "finalizedInstructors": "Vaasjo"}, {"course": "204", "date": "2026-11-25", "topic": "Small Mammals II", "primaryInstructor": "Arthur (Uni Vet)", "finalizedInstructors": "Arthur (Uni Vet)"}, {"course": "304", "date": "2026-10-08", "topic": null, "primaryInstructorContains": "Knight", "primaryInstructor": "Knight (Mauldin, Ricard)", "finalizedInstructors": "Knight (Mauldin, Ricard)"}, {"course": "306", "date": "2026-10-22", "oldStart": "08:30", "newStart": "09:30", "newEnd": "10:30"}, {"course": "306", "date": "2026-10-22", "oldStart": "10:05", "newStart": "10:30", "newEnd": "11:30"}, {"course": "306", "date": "2026-11-19", "oldStart": "08:30", "newStart": "09:30", "newEnd": "10:30"}, {"course": "306", "date": "2026-11-19", "oldStart": "10:05", "newStart": "10:30", "newEnd": "11:30"}, {"course": "306", "date": "2026-11-26", "oldStart": "08:30", "newStart": "09:30", "newEnd": "10:30"}, {"course": "306", "date": "2026-11-26", "oldStart": "10:05", "newStart": "10:30", "newEnd": "11:30"}, {"course": "306", "date": "2026-12-03", "topic": "Production animal case", "primaryInstructor": "Remnant (Dias)", "finalizedInstructors": "Remnant (Dias)"}, {"course": "308", "date": "2026-08-31", "newStart": "08:30", "newEnd": "11:30"}, {"course": "308", "date": "2026-09-10", "type": "LAB", "topic": "Clin Path RBC", "group": "C, D"}, {"course": "308", "date": "2026-09-10", "type": "SRL", "topic": "Clin Path SRL", "group": "A, B"}, {"course": "315", "date": "2027-01-07", "topic": "SA Dentistry (S+P, regional anest, dental rads)", "primaryInstructor": "Palmer (Jackson, Pawlak)", "finalizedInstructors": "Palmer (Jackson, Pawlak)"}, {"course": "315", "date": "2027-01-14", "topic": "SA Dentistry (S+P, regional anest, dental rads)", "primaryInstructor": "Palmer (Jackson, Pawlak)", "finalizedInstructors": "Palmer (Jackson, Pawlak)"}, {"course": "317", "date": "2027-02-04", "topic": "Bovine Palp", "primaryInstructor": "Stover (Hernandez, Camargo, Wennekamp, B. Garcia)", "finalizedInstructors": "Stover (Hernandez, Camargo, Wennekamp, B. Garcia)"}, {"course": "317", "date": "2027-02-11", "topic": "Bovine Palp", "primaryInstructor": "Stover (Hernandez, Camargo, Wennekamp, B. Garcia)", "finalizedInstructors": "Stover (Hernandez, Camargo, Wennekamp, B. Garcia)"}, {"course": "319", "date": "2027-03-18", "topic": "Reptiles", "primaryInstructor": "Whiteside (Vaasjo)", "finalizedInstructors": "Whiteside (Vaasjo)"}, {"course": "319", "date": "2027-03-25", "topic": "Reptiles", "primaryInstructor": "Whiteside (Vaasjo)", "finalizedInstructors": "Whiteside (Vaasjo)"}, {"course": "505", "date": "2026-10-20", "topic": "LA Casting", "primaryInstructor": "Zantingh,  (Remnant, Dias, Wennekamp)", "finalizedInstructors": "Zantingh,  (Remnant, Dias, Wennekamp)"}, {"course": "505", "date": "2026-10-27", "topic": "Soft Tissue Surgery", "primaryInstructor": "Fierheller (Zantingh)", "finalizedInstructors": "Fierheller (Zantingh)"}, {"course": "505", "date": "2027-02-02", "topic": "Bovine Local Anesthesia", "primaryInstructor": "Bradley (Dias, Stover, Camargo, Pinho)", "finalizedInstructors": "Bradley (Dias, Stover, Camargo, Pinho)"}, {"course": "505", "date": "2027-02-09", "topic": "Bovine Local Anesthesia", "primaryInstructor": "Bradley (Dias, Stover, Camargo, Pinho)", "finalizedInstructors": "Bradley (Dias, Stover, Camargo, Pinho)"}, {"course": "505", "date": "2027-02-09", "topic": "SA U/S", "primaryInstructor": "Boysen (Palmer, Osborne, Pawlak, Unrau)", "finalizedInstructors": "Boysen (Palmer, Osborne, Pawlak, Unrau)"}, {"course": "505", "date": "2027-03-23", "primaryInstructorContains": "Romero", "primaryInstructor": "Romero (Zantingh, Scott, Pang, Pinho)", "finalizedInstructors": "Romero (Zantingh, Scott, Pang, Pinho)"}, {"course": "319", "date": "2027-04-08", "primaryInstructorContains": "Whiteside", "primaryInstructor": "1a Wagg(Whitehead),   1b Romero,   1c Vaasjo", "finalizedInstructors": "1a Wagg(Whitehead),   1b Romero,   1c Vaasjo"}];
+
+  async function applyAug17LabUpdates() {
+    const toUpdate = [];
+    AUG17_CHANGES.forEach(chg => {
+      let matches = allSessions.filter(s => String(s.course) === chg.course && s.date === chg.date);
+      if (chg.type) matches = matches.filter(s => s.type === chg.type);
+      if (chg.topic) matches = matches.filter(s => s.topic === chg.topic);
+      if (chg.primaryInstructorContains) matches = matches.filter(s => (s.primaryInstructor||'').includes(chg.primaryInstructorContains));
+      if (chg.oldStart) matches = matches.filter(s => s.startTime === chg.oldStart);
+      matches.forEach(s => toUpdate.push({ session: s, chg }));
+    });
+
+    if (!toUpdate.length) { showToast('No matching rows found for the Aug 17 update set — may already be applied'); return; }
+    if (!confirm(`Found ${toUpdate.length} rows matching the Aug 17 source-file changes (out of ${AUG17_CHANGES.length} expected). Apply updates and create the 2 new 505 Jan 12 rows? Review the checklist first if you haven't already.`)) return;
+
+    const BATCH_SIZE = 100; let updated = 0;
+    for (let i = 0; i < toUpdate.length; i += BATCH_SIZE) {
+      const chunk = toUpdate.slice(i, i + BATCH_SIZE);
+      const batch = db.batch();
+      chunk.forEach(({ session, chg }) => {
+        const patch = { updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
+        ['startTime','endTime','room','group','primaryInstructor','finalizedInstructors'].forEach(k => {
+          const srcKey = k === 'startTime' ? 'newStart' : k === 'endTime' ? 'newEnd' : k;
+          if (chg[srcKey] !== undefined) patch[k] = chg[srcKey];
+        });
+        batch.set(db.collection(SESSIONS_COL).doc(session.id), patch, { merge: true });
+      });
+      try { await batch.commit(); updated += chunk.length; } catch (err) { console.error('[Aug17 update error]', err); }
+    }
+
+    // Create the two new 505 rows for Jan 12, 2027 (didn't exist before)
+    const labGroupId = '505Schedule_2027-01-12_A';
+    const newRows = [
+      { topic: 'Surgery Review', slots: [['08:30','10:30','1'],['11:00','13:00','2'],['14:30','16:30','3']], primaryInstructor: 'Fierheller', secondaryInstructor: 'Zantingh, Atilla' },
+      { topic: 'Bovine Advanced PE', slots: [['08:30','10:30','3'],['11:00','13:00','1'],['14:30','16:30','2']], primaryInstructor: 'Bradley', secondaryInstructor: 'Olchow, Dias' },
+    ];
+    const batch2 = db.batch();
+    let created = 0;
+    newRows.forEach(row => {
+      row.slots.forEach(([start,end,group]) => {
+        const ref = db.collection(SESSIONS_COL).doc();
+        const data = {
+          course: '505', courseName: 'Clinical Skills III', courseDept: 'VETM', year: '3', type: 'LAB',
+          date: '2027-01-12', day: 'Tuesday', startTime: start, endTime: end, topic: row.topic,
+          primaryInstructor: row.primaryInstructor, secondaryInstructor: row.secondaryInstructor,
+          group, labGroupId, column: 'A',
+          week: calcSemesterWeek('2027-01-12').week, dateRange: weekRangeLabelSem('winter', calcSemesterWeek('2027-01-12').week),
+          academicCycle: '2026-2027', createdAt: firebase.firestore.FieldValue.serverTimestamp(), updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        };
+        batch2.set(ref, data);
+        batch2.set(db.collection(HISTORY_COL).doc(), { sessionId: ref.id, ...data, savedAt: firebase.firestore.FieldValue.serverTimestamp() });
+        created++;
+      });
+    });
+    try { await batch2.commit(); } catch (err) { console.error('[Jan12 create error]', err); }
+    showToast(`Updated ${updated} rows, created ${created} new Jan 12 rows`);
+  }
+
   // ════════════════════════════════════════════════════════════
   // CSV BULK IMPORT (admin only)
   // ════════════════════════════════════════════════════════════
   const CSV_FIELD_ALIASES = {
-    rowId: ['row id','rowid','row #','session id'], week: ['week','week #','week#'],
+    rowId: ['row id','rowid','row #','session id'], sortOrder: ['sort order','sortorder'], week: ['week','week #','week#'],
     dateRange: ['date range','daterange'], academicCycle: ['academic cycle','cycle'],
     date: ['date'], day: ['day'], year: ['year','program year'],
     startTime: ['start time','starttime'], endTime: ['end time','endtime'],
