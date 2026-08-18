@@ -182,13 +182,15 @@
   // ── Group colors (exact hex from the source Group Colors reference) ────
   const GROUP_LETTER_COLORS = { A:'#FF6666', B:'#FAD16B', C:'#85CDB9', D:'#00B0F0', E:'#C59FE2', F:'#FF00FF' };
   const GROUP_NAMED_COLORS  = { Blue:'#CFE4F4', Green:'#D6EEE8', Orange:'#FDF0CE', Purple:'#ECDFF5', Yellow:'#FFFFCC' };
+  const GROUP_DIGIT_COLORS  = { '1':'#B3E5FC', '2':'#FFCCBC', '3':'#C8E6C9' };
   function colorForGroupToken(token) {
     const t = token.trim();
     if (!t) return null;
     if (/^[A-Fa-f]$/.test(t)) return GROUP_LETTER_COLORS[t.toUpperCase()];
+    if (GROUP_DIGIT_COLORS[t]) return GROUP_DIGIT_COLORS[t];
     const named = Object.keys(GROUP_NAMED_COLORS).find(n => t.toLowerCase().includes(n.toLowerCase()));
     if (named) return GROUP_NAMED_COLORS[named];
-    return null; // unrecognized (e.g. numbered groups "1"/"2"/"3", "All", "See D2L") — no defined color
+    return null; // unrecognized (e.g. "All", "See D2L") — no defined color
   }
   // A session's `group` field can hold multiple tokens ("A, B" / "D, E, F").
   // Renders one pill per token; multi-token groups show as a hard-edged
@@ -207,6 +209,65 @@
     }
     const textColor = colors.length === 1 && ['#FF00FF','#00B0F0'].includes(colors[0]) ? '#fff' : '#1a1a1a';
     return `<span class="group-badge" style="background:${bg};color:${textColor}" title="Group ${escapeHtml(groupStr)}">${escapeHtml(tokens.join(','))}</span>`;
+  }
+
+  // ── Group Roster (UCID only — no student names, since this repo is public) ──
+  // Source: "Year X UCID & Name" rosters cross-matched against each year's
+  // published group-assignment tables. Course → roster-year mapping:
+  //   Year 1 labs (200,204,206,213,217) → year1 (6-group + 5-group schemes)
+  //   Year 2 labs (304,306,308,315,317,319) → year2 (4-group scheme)
+  //   Year 3 / 505 → year3 (3-group + 2-group schemes)
+  const ROSTER_COURSE_YEAR = {
+    '200':'year1','204':'year1','206':'year1','213':'year1','217':'year1',
+    '304':'year2','306':'year2','308':'year2','315':'year2','317':'year2','319':'year2',
+    '505':'year3',
+  };
+  const ROSTER_DATA = {"year1": [{"ucid": "30179903", "group6": "B", "group5": "Yellow"}, {"ucid": "30287757", "group6": "F", "group5": "Purple"}, {"ucid": "30318860", "group6": "B", "group5": "Blue"}, {"ucid": "30062331", "group6": "A", "group5": "Green"}, {"ucid": "30281265", "group6": "D", "group5": "Yellow"}, {"ucid": "30321639", "group6": "B", "group5": "Blue"}, {"ucid": "10188944", "group6": "F", "group5": "Yellow"}, {"ucid": "30119692", "group6": "A", "group5": "Yellow"}, {"ucid": "30145416", "group6": "B", "group5": "Blue"}, {"ucid": "30321911", "group6": "B", "group5": "Orange"}, {"ucid": "30287668", "group6": "C", "group5": "Blue"}, {"ucid": "30225456", "group6": "B", "group5": "Green"}, {"ucid": "30321256", "group6": "D", "group5": "Yellow"}, {"ucid": "30175238", "group6": "A", "group5": "Blue"}, {"ucid": "30138383", "group6": "D", "group5": "Yellow"}, {"ucid": "30321193", "group6": "B", "group5": "Blue"}, {"ucid": "30164310", "group6": "C", "group5": "Blue"}, {"ucid": "30321017", "group6": "B", "group5": "Orange"}, {"ucid": "30171152", "group6": "D", "group5": "Orange"}, {"ucid": "30214252", "group6": "C", "group5": "Green"}, {"ucid": "30179520", "group6": "C", "group5": "Orange"}, {"ucid": "30114052", "group6": "E", "group5": "Yellow"}, {"ucid": "30321231", "group6": "E", "group5": "Green"}, {"ucid": "30286902", "group6": "A", "group5": "Blue"}, {"ucid": "30320084", "group6": "F", "group5": "Purple"}, {"ucid": "30287618", "group6": "F", "group5": "Yellow"}, {"ucid": "30320999", "group6": "A", "group5": "Green"}, {"ucid": "30092671", "group6": "F", "group5": "Purple"}, {"ucid": "30320723", "group6": "C", "group5": "Green"}, {"ucid": "30321700", "group6": "F", "group5": "Blue"}, {"ucid": "10075381", "group6": "C", "group5": "Yellow"}, {"ucid": "30141531", "group6": "D", "group5": "Orange"}, {"ucid": "10149488", "group6": "C", "group5": "Purple"}, {"ucid": "30200205", "group6": "C", "group5": "Green"}, {"ucid": "30195944", "group6": "D", "group5": "Green"}, {"ucid": "30094469", "group6": "C", "group5": "Orange"}, {"ucid": "30070080", "group6": "B", "group5": "Yellow"}, {"ucid": "30032968", "group6": "E", "group5": "Yellow"}, {"ucid": "30285254", "group6": "B", "group5": "Blue"}, {"ucid": "30287675", "group6": "D", "group5": "Blue"}, {"ucid": "30095831", "group6": "E", "group5": "Orange"}, {"ucid": "30114827", "group6": "D", "group5": "Purple"}, {"ucid": "30112908", "group6": "D", "group5": "Blue"}, {"ucid": "30122752", "group6": "E", "group5": "Green"}, {"ucid": "30120517", "group6": "E", "group5": "Green"}, {"ucid": "30173245", "group6": "A", "group5": "Green"}, {"ucid": "30317170", "group6": "C", "group5": "Purple"}, {"ucid": "30175846", "group6": "E", "group5": "Orange"}, {"ucid": "30204184", "group6": "B", "group5": "Yellow"}, {"ucid": "30154040", "group6": "F", "group5": "Orange"}, {"ucid": "30321520", "group6": "A", "group5": "Blue"}, {"ucid": "30171085", "group6": "E", "group5": "Purple"}, {"ucid": "30320043", "group6": "E", "group5": "Purple"}, {"ucid": "30168825", "group6": "A", "group5": "Orange"}, {"ucid": "30280588", "group6": "F", "group5": "Purple"}, {"ucid": "30321514", "group6": "A", "group5": "Yellow"}, {"ucid": "30113602", "group6": "E", "group5": "Purple"}, {"ucid": "30119820", "group6": "A", "group5": "Yellow"}, {"ucid": "30321775", "group6": "E", "group5": "Green"}, {"ucid": "30033906", "group6": "D", "group5": "Purple"}, {"ucid": "30321807", "group6": "D", "group5": "Purple"}, {"ucid": "30097160", "group6": "F", "group5": "Blue"}, {"ucid": "30321559", "group6": "A", "group5": "Green"}, {"ucid": "30089354", "group6": "D", "group5": "Orange"}, {"ucid": "30287385", "group6": "B", "group5": "Green"}, {"ucid": "30245222", "group6": "E", "group5": "Yellow"}, {"ucid": "30315981", "group6": "A", "group5": "Green"}, {"ucid": "30088777", "group6": "C", "group5": "Purple"}, {"ucid": "30173540", "group6": "C", "group5": "Orange"}, {"ucid": "30101923", "group6": "C", "group5": "Blue"}, {"ucid": "30097693", "group6": "F", "group5": "Yellow"}, {"ucid": "30140919", "group6": "C", "group5": "Orange"}, {"ucid": "30321303", "group6": "B", "group5": "Purple"}, {"ucid": "30178963", "group6": "B", "group5": "Purple"}, {"ucid": "30321409", "group6": "F", "group5": "Orange"}, {"ucid": "30067163", "group6": "B", "group5": "Purple"}, {"ucid": "30321406", "group6": "A", "group5": "Orange"}, {"ucid": "30321119", "group6": "D", "group5": "Blue"}, {"ucid": "30321893", "group6": "F", "group5": "Orange"}, {"ucid": "30287820", "group6": "B", "group5": "Green"}, {"ucid": "10190834", "group6": "F", "group5": "Purple"}, {"ucid": "30062424", "group6": "C", "group5": "Green"}, {"ucid": "30252931", "group6": "E", "group5": "Green"}, {"ucid": "30145919", "group6": "F", "group5": "Yellow"}, {"ucid": "30321613", "group6": "E", "group5": "Purple"}, {"ucid": "30160866", "group6": "C", "group5": "Purple"}, {"ucid": "30320472", "group6": "F", "group5": "Blue"}, {"ucid": "30185042", "group6": "C", "group5": "Yellow"}, {"ucid": "30287673", "group6": "B", "group5": "Orange"}, {"ucid": "30253376", "group6": "F", "group5": "Blue"}, {"ucid": "30321455", "group6": "A", "group5": "Yellow"}, {"ucid": "30067583", "group6": "E", "group5": "Orange"}, {"ucid": "30287266", "group6": "E", "group5": "Orange"}, {"ucid": "30116429", "group6": "D", "group5": "Orange"}, {"ucid": "30321647", "group6": "A", "group5": "Green"}, {"ucid": "30172149", "group6": "A", "group5": "Blue"}, {"ucid": "30234798", "group6": "A", "group5": "Purple"}, {"ucid": "30176760", "group6": "D", "group5": "Blue"}, {"ucid": "30206562", "group6": "E", "group5": "Yellow"}, {"ucid": "30245501", "group6": "D", "group5": "Green"}], "year2": [{"ucid": "30140406", "group4": "A"}, {"ucid": "30287856", "group4": "A"}, {"ucid": "30116541", "group4": "A"}, {"ucid": "30287566", "group4": "A"}, {"ucid": "30252742", "group4": "A"}, {"ucid": "30287559", "group4": "A"}, {"ucid": "30252853", "group4": "A"}, {"ucid": "30286781", "group4": "A"}, {"ucid": "30142094", "group4": "A"}, {"ucid": "30120299", "group4": "A"}, {"ucid": "30253275", "group4": "A"}, {"ucid": "30285917", "group4": "A"}, {"ucid": "30287887", "group4": "A"}, {"ucid": "30139859", "group4": "A"}, {"ucid": "30106744", "group4": "A"}, {"ucid": "30242810", "group4": "A"}, {"ucid": "30160476", "group4": "A"}, {"ucid": "30174097", "group4": "A"}, {"ucid": "30287687", "group4": "A"}, {"ucid": "30170187", "group4": "A"}, {"ucid": "30115218", "group4": "A"}, {"ucid": "00960627", "group4": "A"}, {"ucid": "30286962", "group4": "A"}, {"ucid": "30174902", "group4": "A"}, {"ucid": "30094449", "group4": "A"}, {"ucid": "30086440", "group4": "B"}, {"ucid": "30287187", "group4": "B"}, {"ucid": "10125150", "group4": "B"}, {"ucid": "30166497", "group4": "B"}, {"ucid": "30286850", "group4": "B"}, {"ucid": "30139458", "group4": "B"}, {"ucid": "30142909", "group4": "B"}, {"ucid": "30030609", "group4": "B"}, {"ucid": "30287222", "group4": "B"}, {"ucid": "30215293", "group4": "B"}, {"ucid": "30286715", "group4": "B"}, {"ucid": "30150536", "group4": "B"}, {"ucid": "30286074", "group4": "B"}, {"ucid": "30286999", "group4": "B"}, {"ucid": "30170899", "group4": "B"}, {"ucid": "30287910", "group4": "B"}, {"ucid": "30085791", "group4": "B"}, {"ucid": "30251625", "group4": "B"}, {"ucid": "30066891", "group4": "B"}, {"ucid": "30146901", "group4": "B"}, {"ucid": "30150319", "group4": "B"}, {"ucid": "10063737", "group4": "B"}, {"ucid": "30040845", "group4": "B"}, {"ucid": "30140843", "group4": "B"}, {"ucid": "30142509", "group4": "B"}, {"ucid": "30164664", "group4": "C"}, {"ucid": "30284853", "group4": "C"}, {"ucid": "30287544", "group4": "C"}, {"ucid": "30090830", "group4": "C"}, {"ucid": "10132764", "group4": "C"}, {"ucid": "30120016", "group4": "C"}, {"ucid": "30070123", "group4": "C"}, {"ucid": "30140953", "group4": "C"}, {"ucid": "30286842", "group4": "C"}, {"ucid": "30287473", "group4": "C"}, {"ucid": "30286790", "group4": "C"}, {"ucid": "30287574", "group4": "C"}, {"ucid": "30287437", "group4": "C"}, {"ucid": "30134840", "group4": "C"}, {"ucid": "30281692", "group4": "C"}, {"ucid": "30022739", "group4": "C"}, {"ucid": "30117050", "group4": "C"}, {"ucid": "30150159", "group4": "C"}, {"ucid": "30122879", "group4": "C"}, {"ucid": "30284822", "group4": "C"}, {"ucid": "30111963", "group4": "C"}, {"ucid": "30142731", "group4": "C"}, {"ucid": "00306568", "group4": "C"}, {"ucid": "30229424", "group4": "C"}, {"ucid": "30145477", "group4": "C"}, {"ucid": "30119732", "group4": "D"}, {"ucid": "30118105", "group4": "D"}, {"ucid": "30205951", "group4": "D"}, {"ucid": "30089245", "group4": "D"}, {"ucid": "30171598", "group4": "D"}, {"ucid": "30096210", "group4": "D"}, {"ucid": "30252324", "group4": "D"}, {"ucid": "30070528", "group4": "D"}, {"ucid": "30287384", "group4": "D"}, {"ucid": "30115754", "group4": "D"}, {"ucid": "30287472", "group4": "D"}, {"ucid": "10196727", "group4": "D"}, {"ucid": "30095321", "group4": "D"}, {"ucid": "30112667", "group4": "D"}, {"ucid": "30032833", "group4": "D"}, {"ucid": "30286663", "group4": "D"}, {"ucid": "30215723", "group4": "D"}, {"ucid": "30253331", "group4": "D"}, {"ucid": "30033111", "group4": "D"}, {"ucid": "10162131", "group4": "D"}, {"ucid": "30037791", "group4": "D"}, {"ucid": "30103052", "group4": "D"}, {"ucid": "30271655", "group4": "D"}, {"ucid": "30248192", "group4": "D"}, {"ucid": "30048478", "group4": "D"}], "year3": [{"ucid": "30150616", "group3": "3", "group2": "2"}, {"ucid": "30145215", "group3": "1", "group2": "1"}, {"ucid": "30253234", "group3": "2", "group2": "2"}, {"ucid": "30122878", "group3": "1", "group2": "1"}, {"ucid": "30128571", "group3": "2", "group2": "2"}, {"ucid": "30094127", "group3": "2", "group2": "2"}, {"ucid": "10149440", "group3": "3", "group2": "1"}, {"ucid": "30252560", "group3": "1", "group2": "2"}, {"ucid": "30048177", "group3": "1", "group2": "1"}, {"ucid": "30150500", "group3": "3", "group2": "2"}, {"ucid": "30117349", "group3": "3", "group2": "2"}, {"ucid": "30253258", "group3": "3", "group2": "2"}, {"ucid": "30252767", "group3": "1", "group2": "1"}, {"ucid": "30044270", "group3": "3", "group2": "2"}, {"ucid": "30072399", "group3": "3", "group2": "1"}, {"ucid": "30252365", "group3": "1", "group2": "2"}, {"ucid": "30018553", "group3": "1", "group2": "1"}, {"ucid": "30139324", "group3": "3", "group2": "1"}, {"ucid": "30095990", "group3": "3", "group2": "1"}, {"ucid": "30180755", "group3": "2", "group2": "1"}, {"ucid": "30114815", "group3": "3", "group2": "2"}, {"ucid": "30252881", "group3": "2", "group2": "2"}, {"ucid": "30253047", "group3": "3", "group2": "1"}, {"ucid": "30180902", "group3": "1", "group2": "1"}, {"ucid": "30069329", "group3": "1", "group2": "1"}, {"ucid": "30068117", "group3": "3", "group2": "2"}, {"ucid": "30116661", "group3": "2", "group2": "1"}, {"ucid": "30252799", "group3": "2", "group2": "1"}, {"ucid": "30061615", "group3": "1", "group2": "2"}, {"ucid": "30251526", "group3": "3", "group2": "2"}, {"ucid": "10084665", "group3": "1", "group2": "2"}, {"ucid": "30102569", "group3": "2", "group2": "1"}, {"ucid": "30041483", "group3": "1", "group2": "2"}, {"ucid": "30252923", "group3": "2", "group2": "2"}, {"ucid": "30148198", "group3": "3", "group2": "1"}, {"ucid": "30250832", "group3": "1", "group2": "2"}, {"ucid": "30131854", "group3": "2", "group2": "1"}, {"ucid": "30252928", "group3": "1", "group2": "1"}, {"ucid": "30096287", "group3": "2", "group2": "2"}, {"ucid": "30073743", "group3": "2", "group2": "1"}, {"ucid": "30039414", "group3": "1", "group2": "2"}, {"ucid": "30024831", "group3": "2", "group2": "2"}, {"ucid": "30131475", "group3": "1", "group2": "2"}, {"ucid": "30250015", "group3": "2", "group2": "1"}, {"ucid": "30253252", "group3": "3", "group2": "2"}, {"ucid": "30117828", "group3": "1", "group2": "1"}, {"ucid": "30114585", "group3": "3", "group2": "1"}, {"ucid": "30140351", "group3": "1", "group2": "2"}, {"ucid": "30119169", "group3": "3", "group2": "2"}, {"ucid": "30115375", "group3": "2", "group2": "2"}, {"ucid": "30252754", "group3": "1", "group2": "2"}, {"ucid": "30252342", "group3": "1", "group2": "1"}, {"ucid": "30213109", "group3": "2", "group2": "1"}, {"ucid": "30103436", "group3": "2", "group2": "1"}, {"ucid": "30251858", "group3": "2", "group2": "2"}, {"ucid": "30073662", "group3": "3", "group2": "1"}, {"ucid": "30204476", "group3": "3", "group2": "1"}]};
+
+  function openGroupRoster(rosterYear) {
+    const modal = document.getElementById('modal');
+    const students = ROSTER_DATA[rosterYear] || [];
+    let title, headerCols, bodyRows;
+    if (rosterYear === 'year1') {
+      title = 'Year 1 Lab Groups';
+      headerCols = ['UCID', '6-Group Scheme', '5-Group Scheme'];
+      bodyRows = students.map(s => `<tr><td>${escapeHtml(s.ucid)}</td><td>${renderGroupBadge(s.group6)}</td><td>${renderGroupBadge(s.group5)}</td></tr>`);
+    } else if (rosterYear === 'year2') {
+      title = 'Year 2 Lab Groups';
+      headerCols = ['UCID', 'Group'];
+      bodyRows = students.map(s => `<tr><td>${escapeHtml(s.ucid)}</td><td>${renderGroupBadge(s.group4)}</td></tr>`);
+    } else {
+      title = 'Year 3 (505) Lab Groups';
+      headerCols = ['UCID', '3-Group Scheme', '2-Group Scheme'];
+      bodyRows = students.map(s => `<tr><td>${escapeHtml(s.ucid)}</td><td>${renderGroupBadge(s.group3)}</td><td>${renderGroupBadge(s.group2)}</td></tr>`);
+    }
+
+    modal.innerHTML = `
+      <div class="modal-backdrop" id="modal-backdrop"></div>
+      <div class="modal-box" style="width:min(600px,94vw)">
+        <div class="modal-strip"></div>
+        <button class="modal-close" id="modal-close">✕</button>
+        <div class="modal-header">
+          <div class="modal-title">🧑‍🤝‍🧑 ${escapeHtml(title)}</div>
+          <div class="modal-subtitle">Look up your group by UCID. Names aren't shown here since this page is public — cross-reference your UCID against the roster your program shared with you.</div>
+        </div>
+        <div class="modal-body">
+          <div class="lab-matrix-wrap" style="max-height:60vh;overflow-y:auto">
+            <table class="lab-matrix-table">
+              <thead><tr>${headerCols.map(h=>`<th>${escapeHtml(h)}</th>`).join('')}</tr></thead>
+              <tbody>${bodyRows.join('')}</tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <div></div>
+          <button class="btn btn-secondary" id="detail-close-btn">Close</button>
+        </div>
+      </div>`;
+    modal.classList.add('open');
+    document.getElementById('modal-close').onclick = closeForm;
+    document.getElementById('modal-backdrop').onclick = closeForm;
+    document.getElementById('detail-close-btn').onclick = closeForm;
   }
 
   // Prefer the stored last-name-only display field (new lab data); fall back
@@ -1150,6 +1211,7 @@
     const courses = [...new Set(rows.map(s => `${s.course} - ${s.courseName||''}`))];
     const sw = sample.date ? calcSemesterWeek(sample.date) : null;
     const semWeekLabel = sw ? `${sw.semester==='winter'?'Winter':'Fall'} Week ${sw.week}` : '';
+    const rosterYear = ROSTER_COURSE_YEAR[String(sample.course)];
 
     const sections = [
       buildMatrixTable(wholeClassRows, { withTimeColumns: true }),
@@ -1170,13 +1232,14 @@
           ${sections}
         </div>
         <div class="modal-footer">
-          <div></div>
+          <div>${rosterYear ? `<button class="btn btn-secondary" id="view-roster-btn">🧑‍🤝‍🧑 View Group Roster ↗</button>` : ''}</div>
           <div style="display:flex;gap:10px">
             <button class="btn btn-secondary" id="detail-close-btn">Close</button>
           </div>
         </div>
       </div>`;
     modal.classList.add('open');
+    if (rosterYear) document.getElementById('view-roster-btn').onclick = () => openGroupRoster(rosterYear);
     document.getElementById('modal-close').onclick = closeForm;
     document.getElementById('modal-backdrop').onclick = closeForm;
     document.getElementById('detail-close-btn').onclick = closeForm;
