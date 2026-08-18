@@ -42,11 +42,19 @@
         </div>
 
         <!-- Week rows (populated dynamically in app.js — split across two lines, no scroll) -->
-        <div class="filter-block-row filter-block-row-top">
+        <div class="filter-block-row filter-block-row-top" id="week-pill-block">
           <span class="filter-block-label">Week</span>
           <div class="week-btn-lines">
             <div class="btn-row btn-row-left" id="week-btn-row-1"></div>
             <div class="btn-row btn-row-left" id="week-btn-row-2"></div>
+          </div>
+        </div>
+        <!-- Mobile-only Week dropdown (shown instead of the pill rows above on small screens) -->
+        <div class="fbar-item mobile-only" id="week-dropdown-item">
+          <span class="fbar-label">Week</span>
+          <div class="fbar-select-wrap">
+            <select class="fbar-select" id="week-mobile-select"><option value="all">All Weeks</option></select>
+            <span class="fbar-arrow">▾</span>
           </div>
         </div>
 
@@ -116,12 +124,18 @@
             <button class="btn-cal-nav" id="cal-next">›</button>
           </div>
           <div class="cal-toolbar-right">
+            <button class="fbar-reset hidden" id="add-session-btn" title="Add a new session">＋ Add Session</button>
             <button class="fbar-reset" id="color-toggle">🎨 Colors: On</button>
             <div class="cal-view-toggle">
               <button class="cal-view-btn" id="cal-month-btn">Month</button>
               <button class="cal-view-btn active" id="cal-week-btn">Week</button>
             </div>
           </div>
+        </div>
+
+        <div class="search-view-toggle hidden" id="search-view-toggle">
+          <button class="cal-view-btn active" id="search-view-list">List View</button>
+          <button class="cal-view-btn" id="search-view-cal">Calendar View</button>
         </div>
 
         <div class="cal-card" id="cal-card">
