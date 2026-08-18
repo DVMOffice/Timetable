@@ -99,6 +99,7 @@
   }
   function describeChangedFields(fields) {
     if (!fields || !fields.length) return 'Updated';
+    if (fields.length === 1 && fields[0].fieldLabel === '__CREATED__') return 'New session created';
     const labels = fields.map(f => f.fieldLabel);
     if (labels.length === 1) return `${labels[0]} updated`;
     return `${labels.slice(0,-1).join(', ')}, and ${labels[labels.length-1]} updated`;
@@ -248,14 +249,29 @@
     return data;
   }
 
+  let searchViewMode = 'list'; // 'list' | 'calendar' — only relevant while a search is active
   function renderAll() {
     const searchActive = !!filters.search;
-    document.getElementById('search-results-card').classList.toggle('hidden', !searchActive);
-    document.getElementById('cal-card').classList.toggle('hidden', searchActive);
-    if (searchActive) renderSearchResults(); else renderCalendar();
+    document.getElementById('search-view-toggle').classList.toggle('hidden', !searchActive);
+    const showList = searchActive && searchViewMode === 'list';
+    document.getElementById('search-results-card').classList.toggle('hidden', !showList);
+    document.getElementById('cal-card').classList.toggle('hidden', showList);
+    if (showList) renderSearchResults(); else renderCalendar();
     renderChips();
     populateCourseDropdown(filters.year);
   }
+  document.getElementById('search-view-list').addEventListener('click', () => {
+    searchViewMode = 'list';
+    document.getElementById('search-view-list').classList.add('active');
+    document.getElementById('search-view-cal').classList.remove('active');
+    renderAll();
+  });
+  document.getElementById('search-view-cal').addEventListener('click', () => {
+    searchViewMode = 'calendar';
+    document.getElementById('search-view-cal').classList.add('active');
+    document.getElementById('search-view-list').classList.remove('active');
+    renderAll();
+  });
 
   // ── Custom Course dropdown (supports wrapped option text) ──────
   function populateCourseDropdown(year) {
@@ -367,7 +383,25 @@
         `<button class="pill-btn ${String(filters.week)===String(w)?'active':''}" data-week="${w}">${weekButtonLabelSem(currentSemester, w)}</button>`).join('');
     row2.innerHTML = Array.from({length: Math.max(count-8,0)}, (_,i) => i+9).map(w =>
       `<button class="pill-btn ${String(filters.week)===String(w)?'active':''}" data-week="${w}">${weekButtonLabelSem(currentSemester, w)}</button>`).join('');
+
+    // Mobile dropdown mirrors the same options
+    const mobileSel = document.getElementById('week-mobile-select');
+    mobileSel.innerHTML = `<option value="all">All Weeks</option>` +
+      Array.from({length: count}, (_,i) => i+1).map(w => `<option value="${w}">${weekButtonLabelSem(currentSemester, w)}</option>`).join('');
+    mobileSel.value = filters.week;
   }
+  document.getElementById('week-mobile-select').addEventListener('change', e => {
+    document.querySelectorAll('#week-btn-row-1 .pill-btn, #week-btn-row-2 .pill-btn').forEach(b => b.classList.toggle('active', b.dataset.week===e.target.value));
+    filters.week = e.target.value;
+    filters.weekSemester = currentSemester;
+    if (e.target.value !== 'all') {
+      calDate = weekMondaySem(currentSemester, parseInt(e.target.value));
+      calView = 'week';
+      document.getElementById('cal-week-btn').classList.add('active');
+      document.getElementById('cal-month-btn').classList.remove('active');
+    }
+    renderAll();
+  });
   function wireWeekButtonRow(rowId) {
     document.getElementById(rowId).addEventListener('click', e => {
       const btn = e.target.closest('.pill-btn'); if (!btn) return;
@@ -375,6 +409,7 @@
       btn.classList.add('active');
       filters.week = btn.dataset.week;
       filters.weekSemester = currentSemester;
+      document.getElementById('week-mobile-select').value = btn.dataset.week;
       if (btn.dataset.week !== 'all') {
         calDate = weekMondaySem(currentSemester, parseInt(btn.dataset.week));
         calView = 'week';
@@ -399,6 +434,10 @@
     localStorage.setItem('timetable_colors', JSON.stringify(colorsOn));
     updateColorToggleBtn();
     renderAll();
+  });
+  document.getElementById('add-session-btn').addEventListener('click', () => {
+    if (!isAdmin) return;
+    openForm(null, dateKey(calDate));
   });
 
   // ════════════════════════════════════════════════════════════
@@ -441,7 +480,18 @@
 
     cells.forEach(cell => {
       const dk = dateKey(cell.date);
-      const events = data.filter(s => s.date === dk).sort((a,b)=>(a.startTime||'').localeCompare(b.startTime||''));
+      const dayRows = data.filter(s => s.date === dk).map(s => {
+        let st = Math.max(timeToMinutes(s.startTime), DAY_START_MIN);
+        let en = Math.min(timeToMinutes(s.endTime) ?? st+50, DAY_END_MIN);
+        if (en <= st) en = st + 5;
+        return { ...s, _start: st, _end: en };
+      });
+      // Merge lab-day rows into tiles (same grouping as week view) so a
+      // multi-row lab program shows as one chip, not one chip per row.
+      const labTiles = buildLabTiles(dayRows);
+      const plain = dayRows.filter(s => !s.labGroupId);
+      const events = [...labTiles, ...plain].sort((a,b) => (a.start ?? a._start) - (b.start ?? b._start));
+
       const isTd = isToday(cell.date);
       const cls = ['cal-cell', !cell.current && 'cal-other', isTd && 'cal-today'].filter(Boolean).join(' ');
 
@@ -463,9 +513,20 @@
     container.innerHTML = html;
     wireBlockClicks(container);
     wireOverflowButtons(container);
+    wireLabTileClicks(container);
   }
 
   function renderMonthChip(s, hidden) {
+    if (s.isLabTile) {
+      // Merged lab tile — same grouped content as the week view, condensed
+      // to fit a month cell: course/type + a short topic summary.
+      const topicSummary = s.wholeClassTopics.concat(s.rotationStations.map(r=>r.topic)).filter(Boolean);
+      const summaryText = topicSummary.length ? topicSummary[0] + (topicSummary.length > 1 || s.srlList.length ? ' +more' : '') : (s.srlList[0]?.topic || '');
+      return `<div class="cal-event tg-lab-tile ${hidden?'cal-event-hidden':''}" data-ids="${s.items.map(i=>i.id).join(',')}">
+        <span class="cal-event-l1">${escapeHtml(s.course||'—')} ${escapeHtml(s.type||'')}</span>
+        <span class="cal-event-l2">${escapeHtml(summaryText)}</span>
+      </div>`;
+    }
     const color = colorsOn ? getCourseColor(s.course) : { bg: 'var(--surface-2)', border: 'var(--border-2)' };
     return `<div class="cal-event ${hidden?'cal-event-hidden':''}" style="background:${color.bg};border-left-color:${color.border}" data-id="${s.id}">
       <span class="cal-event-l1">${escapeHtml(s.course||'—')} ${escapeHtml(s.type||'')}</span>
@@ -1133,9 +1194,12 @@
       list.map(c => `<option value="${c.code}" ${c.code===selectedCode?'selected':''}>${c.code} – ${c.name}</option>`).join('');
   }
 
-  function openForm(session) {
+  function openForm(session, presetDate) {
+    const isNew = !session;
+    const s = session || { date: presetDate || dateKey(calDate) };
     const modal = document.getElementById('modal');
-    const sessionYear = session?.year || '';
+    const sessionYear = s.year || '';
+    const sw = s.date ? calcSemesterWeek(s.date) : null;
 
     modal.innerHTML = `
       <div class="modal-backdrop" id="modal-backdrop"></div>
@@ -1143,12 +1207,13 @@
         <div class="modal-strip"></div>
         <button class="modal-close" id="modal-close">✕</button>
         <div class="modal-header">
-          <div class="modal-title">Edit Session</div>
-          <div class="modal-subtitle">${escapeHtml(session.day||'')}, ${escapeHtml(session.date||'')} · Week ${escapeHtml(String(session.week||''))}</div>
+          <div class="modal-title">${isNew ? 'Add Session' : 'Edit Session'}</div>
+          <div class="modal-subtitle" id="form-subtitle">${s.date ? `${calcDayName(s.date)}, ${s.date} · ${sw?(sw.semester==='winter'?'Winter':'Fall'):''} Week ${sw?sw.week:''}` : ''}</div>
         </div>
         <div class="modal-body">
           <form id="session-form">
             <div class="form-grid">
+              <div class="form-field"><label class="form-label">Date</label><input type="date" class="form-input" id="f-date" value="${s.date||''}" /></div>
               <div class="form-field"><label class="form-label">Year</label>
                 <select class="form-select" id="f-year">
                   <option value="1" ${sessionYear==='1'?'selected':''}>Year 1</option>
@@ -1158,33 +1223,31 @@
               </div>
               <div class="form-field"><label class="form-label">Type</label>
                 <select class="form-select" id="f-type">
-                  ${['LEC','LAB','SRL','Quiz/Midterm','OSCE','Exam'].map(t => `<option value="${t}" ${session.type===t?'selected':''}>${t}</option>`).join('')}
+                  ${['LEC','LAB','SRL','Quiz/Midterm','OSCE','Exam'].map(t => `<option value="${t}" ${s.type===t?'selected':''}>${t}</option>`).join('')}
                 </select>
               </div>
               <div class="form-field full"><label class="form-label">Course</label>
-                <select class="form-select" id="f-course">${buildCourseOptionsHtml(sessionYear, session.course)}</select>
+                <select class="form-select" id="f-course">${buildCourseOptionsHtml(sessionYear, s.course)}</select>
               </div>
-              <div class="form-field"><label class="form-label">Start Time</label><input type="time" class="form-input" id="f-start" value="${session.startTime||''}" /></div>
-              <div class="form-field"><label class="form-label">End Time</label><input type="time" class="form-input" id="f-end" value="${session.endTime||''}" /></div>
-              ${session.type==='LAB' || session.room || session.group ? `
-              <div class="form-field"><label class="form-label">Room</label><input type="text" class="form-input" id="f-room" value="${escapeHtml(session.room||'')}" placeholder="e.g. CSB Wards" /></div>
-              <div class="form-field"><label class="form-label">Group</label><input type="text" class="form-input" id="f-group" value="${escapeHtml(session.group||'')}" placeholder="e.g. A, B or All" /></div>
-              ` : ''}
-              <div class="form-field full"><label class="form-label">Topic</label><input type="text" class="form-input" id="f-topic" value="${escapeHtml(session.topic||'')}" /></div>
-              <div class="form-field"><label class="form-label">Primary Instructor</label><input type="text" class="form-input" id="f-primary" value="${escapeHtml(session.primaryInstructor||'')}" /></div>
-              <div class="form-field"><label class="form-label">Secondary Instructor</label><input type="text" class="form-input" id="f-secondary" value="${escapeHtml(session.secondaryInstructor||'')}" /></div>
-              <div class="form-field full"><label class="form-label">Finalized Instructor(s)</label><input type="text" class="form-input" id="f-finalized" value="${escapeHtml(session.finalizedInstructors||'')}" /></div>
-              <div class="form-field full"><label class="form-label">Notes</label><textarea class="form-textarea" id="f-notes">${escapeHtml(session.notes||'')}</textarea></div>
+              <div class="form-field"><label class="form-label">Start Time</label><input type="time" class="form-input" id="f-start" value="${s.startTime||''}" /></div>
+              <div class="form-field"><label class="form-label">End Time</label><input type="time" class="form-input" id="f-end" value="${s.endTime||''}" /></div>
+              <div class="form-field"><label class="form-label">Room</label><input type="text" class="form-input" id="f-room" value="${escapeHtml(s.room||'')}" placeholder="e.g. CSB Wards" /></div>
+              <div class="form-field"><label class="form-label">Group</label><input type="text" class="form-input" id="f-group" value="${escapeHtml(s.group||'')}" placeholder="e.g. A, B or All" /></div>
+              <div class="form-field full"><label class="form-label">Topic</label><input type="text" class="form-input" id="f-topic" value="${escapeHtml(s.topic||'')}" /></div>
+              <div class="form-field"><label class="form-label">Primary Instructor</label><input type="text" class="form-input" id="f-primary" value="${escapeHtml(s.primaryInstructor||'')}" /></div>
+              <div class="form-field"><label class="form-label">Secondary Instructor</label><input type="text" class="form-input" id="f-secondary" value="${escapeHtml(s.secondaryInstructor||'')}" /></div>
+              <div class="form-field full"><label class="form-label">Finalized Instructor(s)</label><input type="text" class="form-input" id="f-finalized" value="${escapeHtml(s.finalizedInstructors||'')}" /></div>
+              <div class="form-field full"><label class="form-label">Notes</label><textarea class="form-textarea" id="f-notes">${escapeHtml(s.notes||'')}</textarea></div>
             </div>
           </form>
-          <div class="history-toggle" id="history-toggle">View version history</div><div class="history-panel" id="history-panel"></div>
+          ${isNew ? '' : `<div class="history-toggle" id="history-toggle">View version history</div><div class="history-panel" id="history-panel"></div>`}
         </div>
         <div class="modal-footer">
-          <button class="btn-danger-text" id="delete-btn">Delete session</button>
+          ${isNew ? '<div></div>' : '<button class="btn-danger-text" id="delete-btn">Delete session</button>'}
           <div style="display:flex;align-items:center;gap:12px">
             <span class="save-status" id="save-status"></span>
             <button class="btn btn-secondary" id="cancel-btn">Cancel</button>
-            <button class="btn btn-primary" id="save-btn">Save Changes</button>
+            <button class="btn btn-primary" id="save-btn">${isNew ? 'Create Session' : 'Save Changes'}</button>
           </div>
         </div>
       </div>`;
@@ -1192,11 +1255,18 @@
     document.getElementById('modal-close').onclick = closeForm;
     document.getElementById('modal-backdrop').onclick = closeForm;
     document.getElementById('cancel-btn').onclick = closeForm;
-    document.getElementById('save-btn').onclick = () => saveSession(session);
-    document.getElementById('delete-btn').onclick = () => deleteSession(session);
-    document.getElementById('history-toggle').onclick = () => loadHistory(session.id);
+    document.getElementById('save-btn').onclick = () => saveSession(isNew ? null : session);
+    if (!isNew) {
+      document.getElementById('delete-btn').onclick = () => deleteSession(session);
+      document.getElementById('history-toggle').onclick = () => loadHistory(session.id);
+    }
     document.getElementById('f-year').addEventListener('change', e => {
       document.getElementById('f-course').innerHTML = buildCourseOptionsHtml(e.target.value, null);
+    });
+    document.getElementById('f-date').addEventListener('change', e => {
+      const d = e.target.value;
+      const w = d ? calcSemesterWeek(d) : null;
+      document.getElementById('form-subtitle').textContent = d ? `${calcDayName(d)}, ${d} · ${w?(w.semester==='winter'?'Winter':'Fall'):''} Week ${w?w.week:''}` : '';
     });
   }
 
@@ -1235,14 +1305,21 @@
     const saveBtn = document.getElementById('save-btn');
     const courseCode = document.getElementById('f-course').value;
     const courseInfo = CourseData.findCourse(courseCode);
+    const dateField = document.getElementById('f-date');
+    const date = dateField ? dateField.value : existing?.date;
+    const sw = date ? calcSemesterWeek(date) : null;
 
     const data = {
-      ...existing,
+      ...(existing || {}),
+      date, day: date ? calcDayName(date) : (existing?.day || ''),
+      week: sw ? sw.week : (existing?.week || null),
+      dateRange: sw ? weekRangeLabelSem(sw.semester, sw.week) : (existing?.dateRange || ''),
+      academicCycle: existing?.academicCycle || '2026-2027',
       year: document.getElementById('f-year').value,
       type: document.getElementById('f-type').value,
       course: courseCode,
-      courseName: courseInfo ? courseInfo.name : existing.courseName,
-      courseDept: courseInfo ? courseInfo.dept : existing.courseDept,
+      courseName: courseInfo ? courseInfo.name : existing?.courseName,
+      courseDept: courseInfo ? courseInfo.dept : existing?.courseDept,
       startTime: document.getElementById('f-start').value,
       endTime: document.getElementById('f-end').value,
       topic: document.getElementById('f-topic').value.trim(),
@@ -1257,15 +1334,28 @@
     if (groupField) data.group = groupField.value.trim();
     delete data.id;
 
+    if (!data.course || !data.date || !data.startTime) {
+      statusEl.className = 'save-status error'; statusEl.textContent = 'Course, Date, and Start Time are required';
+      return;
+    }
+
     saveBtn.disabled = true;
     statusEl.className = 'save-status saving'; statusEl.textContent = 'Saving…';
     try {
-      await db.collection(SESSIONS_COL).doc(existing.id).set(data, { merge: true });
-      await db.collection(HISTORY_COL).add({ sessionId: existing.id, ...data, savedAt: firebase.firestore.FieldValue.serverTimestamp() });
-      const changes = detectChanges(existing, data);
-      await logChangeGroup({ id: existing.id, ...data }, changes);
+      if (existing) {
+        await db.collection(SESSIONS_COL).doc(existing.id).set(data, { merge: true });
+        await db.collection(HISTORY_COL).add({ sessionId: existing.id, ...data, savedAt: firebase.firestore.FieldValue.serverTimestamp() });
+        const changes = detectChanges(existing, data);
+        await logChangeGroup({ id: existing.id, ...data }, changes);
+      } else {
+        const ref = db.collection(SESSIONS_COL).doc();
+        const createData = { ...data, createdAt: firebase.firestore.FieldValue.serverTimestamp() };
+        await ref.set(createData);
+        await db.collection(HISTORY_COL).add({ sessionId: ref.id, ...createData, savedAt: firebase.firestore.FieldValue.serverTimestamp() });
+        await logChangeGroup({ id: ref.id, ...data }, [{ fieldLabel: '__CREATED__', oldValue: '', newValue: '' }]);
+      }
       statusEl.className = 'save-status success'; statusEl.textContent = 'Saved ✓';
-      showToast('Session updated');
+      showToast(existing ? 'Session updated' : 'Session created');
       setTimeout(closeForm, 500);
     } catch (err) {
       console.error('[Save error]', err);
@@ -1316,6 +1406,7 @@
     const btn = document.getElementById('admin-toggle');
     btn.textContent = isAdmin ? 'Exit Admin Mode' : 'Administrator Login';
     btn.classList.toggle('is-admin', isAdmin);
+    document.getElementById('add-session-btn').classList.toggle('hidden', !isAdmin);
     renderStatusBanner();
     renderAll();
   }
@@ -1334,23 +1425,13 @@
     banner.style.cssText = `display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 16px;border-radius:8px;margin-bottom:12px;font-size:12.5px;border:1px solid #BFDBFE;background:#EFF6FF;color:#1E40AF;`;
     banner.innerHTML = `<span>⚙ <strong>Admin mode active</strong> — click any session to view and edit it.</span>
       <span style="display:flex;gap:8px">
-        <button id="fix-lab-years-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔍 Fix Lab Year Duplicates</button>
-        <button id="reset-practicum-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔄 Reset 211/311</button>
-        <button id="fix-aug28-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🩹 Fix Aug 28 Time</button>
-        <button id="fix-aug24-26-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🩹 Fix Aug 24-26 (200)</button>
-        <button id="dedupe-exact-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔍 Find Duplicate Sessions</button>
-        <button id="cleanup-wide-srl-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🧹 Remove Wide-Range SRL Duplicates</button>
+        <button id="remove-stale-200-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🧹 Remove Stale 200 Rows</button>
         <button id="import-csv-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>
       </span>`;
     const col = document.querySelector('.cal-column');
     col.insertBefore(banner, col.firstChild);
     document.getElementById('import-csv-btn').addEventListener('click', openImportModal);
-    document.getElementById('cleanup-wide-srl-btn').addEventListener('click', cleanupWideSrlDuplicates);
-    document.getElementById('fix-lab-years-btn').addEventListener('click', diagnoseAndFixLabYears);
-    document.getElementById('reset-practicum-btn').addEventListener('click', resetPracticumCourses);
-    document.getElementById('fix-aug28-btn').addEventListener('click', fixMalformedAug28Row);
-    document.getElementById('fix-aug24-26-btn').addEventListener('click', fixAug24to26Course200);
-    document.getElementById('dedupe-exact-btn').addEventListener('click', findAndFixExactDuplicates);
+    document.getElementById('remove-stale-200-btn').addEventListener('click', removeStale200Rows);
   }
 
   // One-time cleanup: the *correct* SRL data is the original 1-hour entries
@@ -1561,6 +1642,25 @@
     });
     try { await batch2.commit(); showToast(`Replaced ${targets.length} rows with ${newRows.length} clean entries`); }
     catch (err) { console.error('[Aug24-26 create error]', err); showToast('Failed during create — check console', true); }
+  }
+
+  // One-time cleanup: course 200 wasn't on the Phase-1 lab-exclusion list
+  // (unlike 206, 217, etc.), so its original generic placeholder rows for
+  // Aug 27-28 ("Biosecurity SRL & Surgical Instrument Handling", "Classroom
+  // session & Lab Sessions", "OFF - Prep for White Coat Ceremony") never
+  // got removed once the real, detailed lab schedule was imported for those
+  // same two dates — the two data sets sit side by side instead of the old
+  // one being replaced. Removes exactly the stale rows, identified by their
+  // distinctive leftover topic text, leaving the correct lab data untouched.
+  const STALE_200_TOPICS = ['Biosecurity SRL & Surgical Instrument Handling', 'Classroom session & Lab Sessions', 'OFF - Prep for White Coat Ceremony'];
+  async function removeStale200Rows() {
+    const matches = allSessions.filter(s => String(s.course)==='200' && ['2026-08-27','2026-08-28'].includes(s.date) && STALE_200_TOPICS.includes(s.topic));
+    if (!matches.length) { showToast('No stale Aug 27/28 rows found — may already be fixed'); return; }
+    if (!confirm(`Found ${matches.length} stale leftover rows from the original import on Aug 27/28. Remove them? (The correct, detailed lab data for those days stays untouched.)`)) return;
+    const batch = db.batch();
+    matches.forEach(s => batch.delete(db.collection(SESSIONS_COL).doc(s.id)));
+    try { await batch.commit(); showToast(`Removed ${matches.length} stale rows`); }
+    catch (err) { console.error('[Stale 200 cleanup error]', err); showToast('Failed — check console', true); }
   }
 
   // ════════════════════════════════════════════════════════════
@@ -1824,7 +1924,8 @@
   function updateSideToggleBtn() {
     document.getElementById('main-view').classList.toggle('side-collapsed', sideCollapsed);
     const btn = document.getElementById('side-toggle-btn');
-    btn.textContent = sideCollapsed ? '‹' : '›';
+    const arrow = sideCollapsed ? '‹' : '›';
+    btn.innerHTML = sideCollapsed ? `${arrow}<span class="toggle-label">&nbsp;Updates</span>` : `<span class="toggle-label">Updates&nbsp;</span>${arrow}`;
     btn.title = sideCollapsed ? 'Show Latest Updates / Data Export panel' : 'Hide Latest Updates / Data Export panel';
   }
   updateSideToggleBtn();
