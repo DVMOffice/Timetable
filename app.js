@@ -743,19 +743,21 @@
 
   function isWholeClass(s) { return String(s.group||'').trim().toLowerCase() === 'all'; }
 
+  const YEAR2_LAB_COURSES = ['304','306','308','315','317','319'];
   function summarizeLabTile(t) {
     const items = t.items;
     const hasLab = items.some(i => i.type === 'LAB');
     const labelType = hasLab ? 'LAB' : items[0].type;
+    const isYear2Lab = YEAR2_LAB_COURSES.includes(String(items[0]?.course));
 
-    const wholeClass = items.filter(i => i.type !== 'SRL' && isWholeClass(i)).sort((a,b) => a._start - b._start);
-    const rotationRaw = items.filter(i => i.type !== 'SRL' && !isWholeClass(i));
+    const wholeClass = items.filter(i => (isYear2Lab || i.type !== 'SRL') && isWholeClass(i)).sort((a,b) => a._start - b._start);
+    const rotationRaw = items.filter(i => (isYear2Lab || i.type !== 'SRL') && !isWholeClass(i));
     // Preserve the true source-file topic order via an explicit sortOrder
     // field when present (set during import) — Firestore doesn't guarantee
     // document order, so without this, station order can appear arbitrary.
     const hasSortOrder = rotationRaw.length && rotationRaw.every(i => i.sortOrder != null && i.sortOrder !== '');
     const rotation = hasSortOrder ? [...rotationRaw].sort((a,b) => Number(a.sortOrder) - Number(b.sortOrder)) : rotationRaw;
-    const srl = items.filter(i => i.type === 'SRL').sort((a,b) => a._start - b._start);
+    const srl = isYear2Lab ? [] : items.filter(i => i.type === 'SRL').sort((a,b) => a._start - b._start);
 
     const wholeClassInstructors = [...new Set(wholeClass.flatMap(i => [shortInstructorName(i.primaryInstructor,i.primaryInstructorDisplay), shortInstructorName(i.secondaryInstructor,i.secondaryInstructorDisplay)]).filter(Boolean))];
 
@@ -1203,9 +1205,13 @@
     // 1) whole-class sessions (group === "All") — the morning lab intro / anatomy content
     // 2) color-grouped rotation stations
     // 3) SRL — no time columns, students can complete anytime that day
-    const wholeClassRows = rows.filter(s => s.type !== 'SRL' && String(s.group||'').trim().toLowerCase() === 'all');
-    const rotationRows   = rows.filter(s => s.type !== 'SRL' && String(s.group||'').trim().toLowerCase() !== 'all');
-    const srlRows        = rows.filter(s => s.type === 'SRL');
+    // Year 2 labs structure SRL as a normal timed, grouped rotation station
+    // (same as LAB rows) in the source spreadsheet — only Year 1 uses the
+    // separate "anytime, no time columns" SRL table.
+    const isYear2Lab = YEAR2_LAB_COURSES.includes(String(rows[0]?.course));
+    const wholeClassRows = rows.filter(s => (isYear2Lab || s.type !== 'SRL') && String(s.group||'').trim().toLowerCase() === 'all');
+    const rotationRows   = rows.filter(s => (isYear2Lab || s.type !== 'SRL') && String(s.group||'').trim().toLowerCase() !== 'all');
+    const srlRows        = isYear2Lab ? [] : rows.filter(s => s.type === 'SRL');
 
     const sample = rows[0];
     const courses = [...new Set(rows.map(s => `${s.course} - ${s.courseName||''}`))];
@@ -1499,6 +1505,7 @@
         <button id="year2-diagnostic-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">📊 Export Year 2 Lab Diagnostic</button>
         <button id="year2-rebuild-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔨 Delete Year 2 LAB Rows (for rebuild)</button>
         <button id="fix-lab-years-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔍 Fix Lab Year Duplicates</button>
+        <button id="delete-308-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔨 Delete 308 Rows (for rebuild)</button>
         <button id="aug17-updates-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">📋 Apply Aug 17 Lab Updates</button>
         <button id="import-csv-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>
       </span>`;
@@ -1509,6 +1516,7 @@
     document.getElementById('year2-diagnostic-btn').addEventListener('click', exportYear2LabDiagnostic);
     document.getElementById('year2-rebuild-btn').addEventListener('click', deleteYear2LabRowsForRebuild);
     document.getElementById('fix-lab-years-btn').addEventListener('click', diagnoseAndFixLabYears);
+    document.getElementById('delete-308-btn').addEventListener('click', delete308RowsForRebuild);
     document.getElementById('aug17-updates-btn').addEventListener('click', applyAug17LabUpdates);
   }
 
@@ -1753,6 +1761,23 @@
   // and LEC rows are untouched — those are already confirmed correct. After
   // running this, use the existing Import CSV button with
   // year2_lab_rebuild.csv to insert the complete, verified 179-row set.
+  // One-time: deletes ALL 308 LAB and SRL rows so the corrected structure
+  // (SRL now a normal timed/grouped row, matching the source spreadsheet)
+  // can be cleanly imported via course308_rebuild.csv.
+  async function delete308RowsForRebuild() {
+    const matches = allSessions.filter(s => String(s.course)==='308' && ['LAB','SRL'].includes(s.type));
+    if (!matches.length) { showToast('No 308 LAB/SRL rows found — may already be cleared'); return; }
+    if (!confirm(`This will delete ${matches.length} LAB/SRL rows for course 308 (LEC/Quiz untouched). After this, import course308_rebuild.csv via Import CSV. Proceed?`)) return;
+    const BATCH_SIZE = 150; let deleted = 0;
+    for (let i = 0; i < matches.length; i += BATCH_SIZE) {
+      const chunk = matches.slice(i, i + BATCH_SIZE);
+      const batch = db.batch();
+      chunk.forEach(s => batch.delete(db.collection(SESSIONS_COL).doc(s.id)));
+      try { await batch.commit(); deleted += chunk.length; } catch (err) { console.error('[308 delete error]', err); }
+    }
+    showToast(`Deleted ${deleted} rows — now import course308_rebuild.csv via Import CSV`);
+  }
+
   async function deleteYear2LabRowsForRebuild() {
     const courses = ['304','306','308','315','317','319'];
     const matches = allSessions.filter(s => courses.includes(String(s.course)) && s.type === 'LAB');
