@@ -1519,27 +1519,17 @@
     banner.style.cssText = `display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 16px;border-radius:8px;margin-bottom:12px;font-size:12.5px;border:1px solid #BFDBFE;background:#EFF6FF;color:#1E40AF;`;
     banner.innerHTML = `<span>⚙ <strong>Admin mode active</strong> — click any session to view and edit it.</span>
       <span style="display:flex;gap:8px">
-        <button id="remove-stale-200-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🧹 Remove Stale 200 Rows</button>
         <button id="year2-diagnostic-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">📊 Export Year 2 Lab Diagnostic</button>
-        <button id="year2-rebuild-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔨 Delete Year 2 LAB Rows (for rebuild)</button>
         <button id="fix-lab-years-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔍 Fix Lab Year Duplicates</button>
-        <button id="delete-308-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔨 Delete 308 Rows (for rebuild)</button>
-        <button id="delete-year2-remaining-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔨 Delete 304/306/315/317/319 Rows (for rebuild)</button>
-        <button id="remove-old-scheme-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🧹 Remove Old-Scheme Duplicates</button>
-        <button id="aug17-updates-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">📋 Apply Aug 17 Lab Updates</button>
+        <button id="clear-secondary-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🧹 Clear Leaked Secondary Instructor (315/317/319)</button>
         <button id="import-csv-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>
       </span>`;
     const col = document.querySelector('.cal-column');
     col.insertBefore(banner, col.firstChild);
     document.getElementById('import-csv-btn').addEventListener('click', openImportModal);
-    document.getElementById('remove-stale-200-btn').addEventListener('click', removeStale200Rows);
     document.getElementById('year2-diagnostic-btn').addEventListener('click', exportYear2LabDiagnostic);
-    document.getElementById('year2-rebuild-btn').addEventListener('click', deleteYear2LabRowsForRebuild);
     document.getElementById('fix-lab-years-btn').addEventListener('click', diagnoseAndFixLabYears);
-    document.getElementById('delete-308-btn').addEventListener('click', delete308RowsForRebuild);
-    document.getElementById('delete-year2-remaining-btn').addEventListener('click', deleteYear2RemainingCoursesForRebuild);
-    document.getElementById('remove-old-scheme-btn').addEventListener('click', removeOldSchemeYear2Duplicates);
-    document.getElementById('aug17-updates-btn').addEventListener('click', applyAug17LabUpdates);
+    document.getElementById('clear-secondary-btn').addEventListener('click', clearYear2SickAnimalsSecondaryInstructor);
   }
 
   // One-time cleanup: the *correct* SRL data is the original 1-hour entries
@@ -1806,6 +1796,30 @@
   // bare "SickAnimals_..."). Matched only by this distinctive prefix, which
   // cannot collide with the current naming scheme (capital "Of", includes
   // course number) or any standalone session.
+  // One-time: clears a leaked stale secondaryInstructor value on 315/317/319
+  // rebuild rows. These rows matched pre-existing documents during import
+  // (topic-inclusive matching correctly found them), which refreshed every
+  // field my CSV provided — but never touched secondaryInstructor, since my
+  // rebuild data folds the full instructor string into one field and never
+  // had a separate value to send. The old, unrelated value from the prior
+  // document survived untouched, and differed between a station's two time
+  // slots, which broke station-matching and caused the visible row split.
+  // Scoped ONLY to 315/317/319 — 304/306/308 are confirmed correct and untouched.
+  async function clearYear2SickAnimalsSecondaryInstructor() {
+    const isTargetTile = (lg) => /^SickAnimals3(15|17|19)_/.test(lg||'');
+    const matches = allSessions.filter(s => isTargetTile(s.labGroupId) && s.secondaryInstructor);
+    if (!matches.length) { showToast('No leaked secondary-instructor values found — may already be clean'); return; }
+    if (!confirm(`Found ${matches.length} rows (315/317/319 only) with a leftover secondary-instructor value from before this rebuild. Clear it? (Primary instructor already has the full team listed — nothing else changes.)`)) return;
+    const BATCH_SIZE = 150; let cleared = 0;
+    for (let i = 0; i < matches.length; i += BATCH_SIZE) {
+      const chunk = matches.slice(i, i + BATCH_SIZE);
+      const batch = db.batch();
+      chunk.forEach(s => batch.set(db.collection(SESSIONS_COL).doc(s.id), { secondaryInstructor: '', updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true }));
+      try { await batch.commit(); cleared += chunk.length; } catch (err) { console.error('[Clear secondary instructor error]', err); }
+    }
+    showToast(`Cleared secondary instructor on ${cleared} rows`);
+  }
+
   async function removeOldSchemeYear2Duplicates() {
     const isOldScheme = (lg) => {
       if (!lg) return false;
