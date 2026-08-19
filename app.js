@@ -754,7 +754,7 @@
 
   function isWholeClass(s) { return String(s.group||'').trim().toLowerCase() === 'all'; }
 
-  const YEAR2_LAB_COURSES = ['304','306','308','315','317','319'];
+  const YEAR2_LAB_COURSES = ['200','304','306','308','315','317','319'];
   function summarizeLabTile(t) {
     const items = t.items;
     const hasLab = items.some(i => i.type === 'LAB');
@@ -1523,6 +1523,7 @@
         <button id="fix-lab-years-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔍 Fix Lab Year Duplicates</button>
         <button id="clear-secondary-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🧹 Clear Leaked Secondary Instructor (315/317/319)</button>
         <button id="delete-505-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔨 Delete 505 Rows (for rebuild)</button>
+        <button id="delete-200-aug2728-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔨 Delete 200 Aug 27/28 (for rebuild)</button>
         <button id="import-csv-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>
       </span>`;
     const col = document.querySelector('.cal-column');
@@ -1532,6 +1533,7 @@
     document.getElementById('fix-lab-years-btn').addEventListener('click', diagnoseAndFixLabYears);
     document.getElementById('clear-secondary-btn').addEventListener('click', clearYear2SickAnimalsSecondaryInstructor);
     document.getElementById('delete-505-btn').addEventListener('click', delete505RowsForRebuild);
+    document.getElementById('delete-200-aug2728-btn').addEventListener('click', delete200Aug2728ForRebuild);
   }
 
   // One-time cleanup: the *correct* SRL data is the original 1-hour entries
@@ -1857,6 +1859,22 @@
   // 505 was never part of that rebuild, so it's been broken since the
   // original bulk import). OSCE-type rows are a different `type` value and
   // are structurally untouched by this LAB-only delete.
+  // One-time: deletes only the exact (date, topic) rows confirmed by the
+  // user's source screenshots for 200's Aug 27/28 sessions — wrong times,
+  // missing group slots, and the whole-class row missing entirely on Aug 28.
+  // Never a blanket delete — matched precisely so nothing else on 200 is touched.
+  const COURSE200_AUG27_28_DELETE_KEYS = [["2026-08-27", "Biosafety SRL"], ["2026-08-27", "Basic SX Instrument Handling"], ["2026-08-27", "Review - Student Led"], ["2026-08-27", "Classroom / Anatomy Intro / Comm Clinic Intro/ Animal Welfare"], ["2026-08-27", "Bovine Handling/ Restraint Basics"], ["2026-08-27", "Equine Handling/ Restraint Basics"], ["2026-08-27", "SA Handling/ Restraint Basics"], ["2026-08-28", "Classroom/ Anatomy Intro/ Comm Clinic Intro/Animal Welfare"], ["2026-08-28", "Bovine Handling/ Restraint Basics"], ["2026-08-28", "Equine Handling/ Restraint Basics"], ["2026-08-28", "SA Handling/ Restraint Basics"]];
+  async function delete200Aug2728ForRebuild() {
+    const keySet = new Set(COURSE200_AUG27_28_DELETE_KEYS.map(([d,t]) => `${d}|${normImportTopic(t)}`));
+    const matches = allSessions.filter(s => String(s.course)==='200' && keySet.has(`${s.date}|${normImportTopic(s.topic)}`));
+    if (!matches.length) { showToast('No matching Aug 27/28 rows found — may already be cleared'); return; }
+    if (!confirm(`Found ${matches.length} rows matching the exact Aug 27/28 topics confirmed in your source screenshots. After deleting, import course200_aug27_28_rebuild.csv via Import CSV. Proceed?`)) return;
+    const batch = db.batch();
+    matches.forEach(s => batch.delete(db.collection(SESSIONS_COL).doc(s.id)));
+    try { await batch.commit(); showToast(`Deleted ${matches.length} rows — now import course200_aug27_28_rebuild.csv via Import CSV`); }
+    catch (err) { console.error('[200 Aug27/28 delete error]', err); showToast('Failed — check console', true); }
+  }
+
   async function delete505RowsForRebuild() {
     const matches = allSessions.filter(s => String(s.course)==='505' && s.type === 'LAB');
     if (!matches.length) { showToast('No 505 LAB rows found — may already be cleared'); return; }
