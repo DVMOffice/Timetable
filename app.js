@@ -1498,6 +1498,7 @@
         <button id="remove-stale-200-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🧹 Remove Stale 200 Rows</button>
         <button id="year2-diagnostic-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">📊 Export Year 2 Lab Diagnostic</button>
         <button id="year2-rebuild-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔨 Delete Year 2 LAB Rows (for rebuild)</button>
+        <button id="fix-lab-years-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔍 Fix Lab Year Duplicates</button>
         <button id="aug17-updates-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">📋 Apply Aug 17 Lab Updates</button>
         <button id="import-csv-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>
       </span>`;
@@ -1507,6 +1508,7 @@
     document.getElementById('remove-stale-200-btn').addEventListener('click', removeStale200Rows);
     document.getElementById('year2-diagnostic-btn').addEventListener('click', exportYear2LabDiagnostic);
     document.getElementById('year2-rebuild-btn').addEventListener('click', deleteYear2LabRowsForRebuild);
+    document.getElementById('fix-lab-years-btn').addEventListener('click', diagnoseAndFixLabYears);
     document.getElementById('aug17-updates-btn').addEventListener('click', applyAug17LabUpdates);
   }
 
