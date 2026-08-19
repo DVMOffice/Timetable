@@ -192,13 +192,24 @@
     if (named) return GROUP_NAMED_COLORS[named];
     return null; // unrecognized (e.g. "All", "See D2L") — no defined color
   }
-  // A session's `group` field can hold multiple tokens ("A, B" / "D, E, F").
-  // Renders one pill per token; multi-token groups show as a hard-edged
-  // split-color pill (each band = one token's color) rather than a single
-  // averaged color, so each represented group stays visually distinct.
+  // A session's `group` field can hold multiple tokens either comma-separated
+  // ("A, B" / "D, E, F") or concatenated with no separator ("AB", "CD",
+  // "ABCD") — both mean the same thing (multiple groups at once). Renders
+  // one pill per token; multi-token groups show as a hard-edged split-color
+  // pill (each band = one token's color) rather than a single averaged color,
+  // so each represented group stays visually distinct.
+  function expandGroupToken(token) {
+    const t = token.trim();
+    // Pure A-F uppercase letters with no comma (e.g. "AB", "ABCD") — expand
+    // into individual letters. Named/digit/"All" tokens never match this
+    // (they contain lowercase letters or non-A-F characters) so are left intact.
+    if (/^[A-F]{2,}$/.test(t)) return t.split('');
+    return [t];
+  }
   function renderGroupBadge(groupStr) {
     if (!groupStr) return '';
-    const tokens = groupStr.split(',').map(t => t.trim()).filter(Boolean);
+    const rawTokens = groupStr.split(',').map(t => t.trim()).filter(Boolean);
+    const tokens = rawTokens.flatMap(expandGroupToken);
     const colors = tokens.map(t => colorForGroupToken(t) || '#D8DCE3');
     let bg;
     if (colors.length === 1) bg = colors[0];
@@ -1764,10 +1775,17 @@
   // One-time: deletes ALL 308 LAB and SRL rows so the corrected structure
   // (SRL now a normal timed/grouped row, matching the source spreadsheet)
   // can be cleanly imported via course308_rebuild.csv.
+  // Scoped by EXACT topic match (not course+type) — this is the fix for the
+  // earlier mistake, where a blanket course+type filter wrongly caught
+  // unrelated standalone SRL sessions that happen to share the same type.
+  // Only rows whose topic genuinely belongs to the Fundamentals lab rotation
+  // are touched; regular standalone SRL sessions are structurally impossible
+  // to match here regardless of their type or course.
+  const COURSE308_LAB_TOPICS = ["Anesthesia Dry Lab", "Anesthesia Induction, Intubation & Maintenance", "Bovine PE Review", "Clin Path Cytology", "Clin Path RBC", "Clin Path SRL", "Clin Pharm Prxn dosage and dispensing", "Clinical Case SRL", "Diagnostic Imaging", "Equine PE - Sampling & Inj", "Herd Health Diagnostics", "SA Blood Sampling", "Sx: Gown and Glove", "Sys Path"];
   async function delete308RowsForRebuild() {
-    const matches = allSessions.filter(s => String(s.course)==='308' && ['LAB','SRL'].includes(s.type));
-    if (!matches.length) { showToast('No 308 LAB/SRL rows found — may already be cleared'); return; }
-    if (!confirm(`This will delete ${matches.length} LAB/SRL rows for course 308 (LEC/Quiz untouched). After this, import course308_rebuild.csv via Import CSV. Proceed?`)) return;
+    const matches = allSessions.filter(s => String(s.course)==='308' && COURSE308_LAB_TOPICS.includes(s.topic));
+    if (!matches.length) { showToast('No matching 308 lab-rotation rows found — may already be cleared'); return; }
+    if (!confirm(`This will delete ${matches.length} rows matching the 308 lab-rotation topics only (standalone SRL sessions and everything else are untouched). After this, import course308_rebuild.csv via Import CSV. Proceed?`)) return;
     const BATCH_SIZE = 150; let deleted = 0;
     for (let i = 0; i < matches.length; i += BATCH_SIZE) {
       const chunk = matches.slice(i, i + BATCH_SIZE);
