@@ -1519,7 +1519,7 @@
     banner.style.cssText = `display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 16px;border-radius:8px;margin-bottom:12px;font-size:12.5px;border:1px solid #BFDBFE;background:#EFF6FF;color:#1E40AF;`;
     banner.innerHTML = `<span>⚙ <strong>Admin mode active</strong> — click any session to view and edit it.</span>
       <span style="display:flex;gap:8px">
-        <button id="year2-diagnostic-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">📊 Export Year 2 Lab Diagnostic</button>
+        <button id="year2-diagnostic-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">📊 Export Lab Diagnostic (Year 2 + 505)</button>
         <button id="fix-lab-years-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔍 Fix Lab Year Duplicates</button>
         <button id="clear-secondary-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🧹 Clear Leaked Secondary Instructor (315/317/319)</button>
         <button id="import-csv-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>
@@ -1756,14 +1756,14 @@
   // used to compare the actual database state against the source schedule
   // when something looks wrong on the calendar.
   function exportYear2LabDiagnostic() {
-    const courses = ['304','306','308','315','317','319'];
+    const courses = ['304','306','308','315','317','319','505'];
     const rows = allSessions.filter(s => courses.includes(String(s.course))).sort((a,b) =>
       String(a.course).localeCompare(String(b.course)) || (a.date||'').localeCompare(b.date||'') || (a.startTime||'').localeCompare(b.startTime||''));
     const headers = ['docId','course','type','date','day','startTime','endTime','topic','group','primaryInstructor','secondaryInstructor','finalizedInstructors','labGroupId','column','room','year'];
     const csvRows = rows.map(s => headers.map(h => h==='docId' ? s.id : (s[h]||'')));
     const csv = [headers, ...csvRows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
-    downloadBlob(csv, `year2_lab_diagnostic_${dateKey(new Date())}.csv`, 'text/csv');
-    showToast(`Exported ${rows.length} Year 2 lab session rows`);
+    downloadBlob(csv, `lab_diagnostic_${dateKey(new Date())}.csv`, 'text/csv');
+    showToast(`Exported ${rows.length} lab session rows`);
   }
 
   // One-time: deletes only the LAB-type rows for the 6 Year 2 lab courses.
