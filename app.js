@@ -832,10 +832,17 @@
         const posStyle = `top:${topPct}%;height:${heightPct}%;left:calc(${lane*laneWidth}% + 2px);width:calc(${laneWidth}% - 4px)`;
 
         if (cluster.isLabTile) {
-          if (cluster.items.length === 1) {
-            // A tile that ended up with just one row (e.g. a standalone
-            // whole-class session with nothing else nearby in time) reads
-            // better as a plain simple block, same as any LEC/SRL card.
+          const singleHasRealGroup = cluster.items.length === 1 && (() => {
+            const g = String(cluster.items[0].group||'').trim().toLowerCase();
+            return g && g !== 'all';
+          })();
+          if (cluster.items.length === 1 && !singleHasRealGroup) {
+            // A tile that ended up with just one row and no real group
+            // assignment (e.g. a standalone whole-class session with
+            // nothing else nearby in time) reads better as a plain simple
+            // block, same as any LEC/SRL card. A single row WITH a genuine
+            // group (e.g. "ABCD") still gets the full table + roster link,
+            // since students still need to look up their group for it.
             const s = cluster.items[0];
             const color = colorsOn ? getCourseColor(s.course) : null;
             const style = colorsOn ? `${posStyle};background:${color.bg};border-left-color:${color.border}` : posStyle;
@@ -1518,6 +1525,7 @@
         <button id="fix-lab-years-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔍 Fix Lab Year Duplicates</button>
         <button id="delete-308-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔨 Delete 308 Rows (for rebuild)</button>
         <button id="delete-year2-remaining-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔨 Delete 304/306/315/317/319 Rows (for rebuild)</button>
+        <button id="remove-old-scheme-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🧹 Remove Old-Scheme Duplicates</button>
         <button id="aug17-updates-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">📋 Apply Aug 17 Lab Updates</button>
         <button id="import-csv-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>
       </span>`;
@@ -1530,6 +1538,7 @@
     document.getElementById('fix-lab-years-btn').addEventListener('click', diagnoseAndFixLabYears);
     document.getElementById('delete-308-btn').addEventListener('click', delete308RowsForRebuild);
     document.getElementById('delete-year2-remaining-btn').addEventListener('click', deleteYear2RemainingCoursesForRebuild);
+    document.getElementById('remove-old-scheme-btn').addEventListener('click', removeOldSchemeYear2Duplicates);
     document.getElementById('aug17-updates-btn').addEventListener('click', applyAug17LabUpdates);
   }
 
@@ -1791,6 +1800,26 @@
   // rotation schedule (the near-miss that happened with 308).
   const YEAR2_REMAINING_DELETE_KEYS = [["304", "2026-08-25", "Asepsis and Suture Patterns"], ["304", "2026-08-25", "Asepsis and Knots"], ["304", "2026-09-03", "Asepsis and Suture Patterns"], ["304", "2026-09-03", "Asepsis and Knots"], ["304", "2026-09-17", "Adaptive change, Homeostasis, Cellular accumulations, Inflammation Jeopardy (anatomic path)"], ["304", "2026-09-24", "IV catheter placement"], ["304", "2026-09-24", "Fluid administration"], ["304", "2026-10-08", "Neoplasia: Cytology, histology (path)"], ["306", "2026-10-15", "Principles of parasite dx"], ["306", "2026-10-15", "Parasite pharmacology case"], ["306", "2026-10-22", "Antiparasite diagnostics"], ["306", "2026-10-22", "Virology cases or SRL"], ["306", "2026-10-29", "Principles of viral dx"], ["306", "2026-10-29", "Virology SRL or cases"], ["306", "2026-11-05", "Culture and antimicrobial susceptability"], ["306", "2026-11-05", "Bacteriology pharm case?"], ["306", "2026-11-19", "Antimicrobial susceptibility"], ["306", "2026-11-19", "Antibiotic selection case"], ["306", "2026-11-26", "Hypersensitivity (point of case testing/blood typing/crossmatch"], ["306", "2026-11-26", "Immune pharm case"], ["306", "2026-12-03", "Organ rxn to infection \nImmunohistochemistry"], ["306", "2026-12-03", "Production animal case"], ["315", "2027-01-07", "Sx: (Inverting patterns, Cushing/Connell, Lembert)"], ["315", "2027-01-07", "Eq Dentistry (oral exam, speculum, intro to rasping)"], ["315", "2027-01-07", "SA Dentistry (S+P, regional anest, dental rads)"], ["315", "2027-01-07", "Bovine Oral Exam + GIT"], ["315", "2027-01-07", "Systemic Pathology"], ["315", "2027-01-14", "Sx: (Inverting patterns, Cushing/Connell, Lembert)"], ["315", "2027-01-14", "Eq Dentistry (oral exam, speculum, intro to rasping)"], ["315", "2027-01-14", "SA Dentistry (S+P, regional anest, dental rads)"], ["315", "2027-01-14", "Bovine Oral Exam + GIT"], ["315", "2027-01-14", "Formative"], ["315", "2027-01-21", "Sx: (Entering and Closing the Abdomen)"], ["315", "2027-01-21", "Eq NG Tube, Rectal Palpation, Abdominocentesis"], ["315", "2027-01-21", "SA NG/OG/O tube"], ["315", "2027-01-21", "SA Abdominal, POCUS, Abdominocentesis"], ["315", "2027-01-21", "Systemic Pathology"], ["315", "2027-01-28", "Sx: (Entering and Closing the Abdomen)"], ["315", "2027-01-28", "Eq NG Tube, Rectal Palpation, Abdominocentesis"], ["315", "2027-01-28", "SA NG/OG/O tube"], ["315", "2027-01-28", "SA Abdominal, POCUS, Abdominocentesis"], ["315", "2027-01-28", "Formative"], ["317", "2027-02-04", "SysPath: SA repro (ovaries/uterus); pyometra; prostate/testes; placenta types  Systems Path: Bovine/Equine palp landmarks; placental lesions; udder/teat anatomy"], ["317", "2027-02-04", "Bovine Palp"], ["317", "2027-02-04", "Dystocia"], ["317", "2027-02-04", "Equine simulator cervix visualization and sterile lab"], ["317", "2027-02-11", "Electives (Student Led, Modular)"], ["317", "2027-02-11", "Bovine Palp"], ["317", "2027-02-11", "Dystocia"], ["317", "2027-02-11", "Equine simulator cervix visualization and sterile lab"], ["317", "2027-03-04", "SysPath:  Adrenal/Thyroid/Parathyroid; Nephron microanatomy; species renal differences Systems Path: AKI vs CKD pathology; urethral obstruction; cystitis histopathology"], ["317", "2027-03-04", "Urinanalysis workflow to include Collection - Clin Path"], ["317", "2027-03-04", "Cathetarization/Blocked Cats and Dogs"], ["317", "2027-03-04", "Urinary POCUS/Cysto"], ["317", "2027-03-11", "Formative: Endocrine Cases and UA; Kidney Staging and Fluids"], ["317", "2027-03-11", "Urinanalysis workflow to include Collection - Clin Path"], ["317", "2027-03-11", "Cathetarization/Blocke Cats and Dogs"], ["317", "2027-03-11", "Urinary POCUS/Cysto"], ["317", "2027-03-11", "Electives: Endocrine Diagnostics (2 Stations) across species, Urolithiasis Equine"], ["319", "2027-03-18", "Sys Path/Anatomy:\nSpecial  Senses / Mammary"], ["319", "2027-03-18", "LA Optho Live"], ["319", "2027-03-18", "Reptiles"], ["319", "2027-03-18", "LA IVC/IVF"], ["319", "2027-03-25", "Electives\na - Clin Path Exotic\nb - SA Neonatal Nutrition\nc - Mammary Suturing"], ["319", "2027-03-25", "LA Optho Live"], ["319", "2027-03-25", "Reptiles"], ["319", "2027-03-25", "LA IVC/IVF"], ["319", "2027-03-25", "Formative"], ["319", "2027-04-01", "Anatomy / Sys Path\nExotics / Neonate"], ["319", "2027-04-01", "Bovine Milk Quality"], ["319", "2027-04-01", "SA Optho - Live"], ["319", "2027-04-01", "Euthanasia"], ["319", "2027-04-08", "Electives\na - Clin Path Neonates\nb - Radiology - LA Neonates\nc - Wildlife Anesthesia"], ["319", "2027-04-08", "Bovine Milk Quality"], ["319", "2027-04-08", "SA Optho - Live"], ["319", "2027-04-08", "Euthanasia"], ["319", "2027-04-08", "Formative"]];
   function normTopic(s) { return String(s||'').replace(/\s+/g, ' ').trim().toLowerCase(); }
+  // One-time: removes 13 confirmed leftover rows still using an old
+  // labGroupId naming scheme that predates this whole rebuild effort
+  // (lowercase "of", no course number — e.g. "ScienceofWhatGoesWrong_..." or
+  // bare "SickAnimals_..."). Matched only by this distinctive prefix, which
+  // cannot collide with the current naming scheme (capital "Of", includes
+  // course number) or any standalone session.
+  async function removeOldSchemeYear2Duplicates() {
+    const isOldScheme = (lg) => {
+      if (!lg) return false;
+      return /^ScienceofWhatGoesWrong_\d/.test(lg) || /^SickAnimals_\d/.test(lg);
+    };
+    const matches = allSessions.filter(s => isOldScheme(s.labGroupId));
+    if (!matches.length) { showToast('No old-scheme duplicate rows found — may already be cleared'); return; }
+    if (!confirm(`Found ${matches.length} rows still on the old pre-rebuild labGroupId scheme. Remove them? (Current-scheme rows and any standalone sessions are untouched.)`)) return;
+    const batch = db.batch();
+    matches.forEach(s => batch.delete(db.collection(SESSIONS_COL).doc(s.id)));
+    try { await batch.commit(); showToast(`Removed ${matches.length} old-scheme duplicate rows`); }
+    catch (err) { console.error('[Old-scheme cleanup error]', err); showToast('Failed — check console', true); }
+  }
+
   async function deleteYear2RemainingCoursesForRebuild() {
     const keySet = new Set(YEAR2_REMAINING_DELETE_KEYS.map(([c,d,t]) => `${c}|${d}|${normTopic(t)}`));
     const matches = allSessions.filter(s => keySet.has(`${s.course}|${s.date}|${normTopic(s.topic)}`));
@@ -1931,6 +1960,11 @@
     finalizedInstructors: ['finalized instructors'], notes: ['notes'],
   };
 
+  // Normalizes topic text for matching purposes only (collapses whitespace/
+  // line breaks, case-insensitive) — used so the import matching key isn't
+  // fooled by trivial formatting differences between source and stored text.
+  function normImportTopic(s) { return String(s||'').replace(/\s+/g, ' ').trim().toLowerCase(); }
+
   function parseCSV(text) {
     const rows = []; let row = [], field = '', inQuotes = false;
     for (let i = 0; i < text.length; i++) {
@@ -2007,8 +2041,12 @@
     function renderImportPreview(sessions) {
       const el = document.getElementById('import-preview');
       if (!sessions.length) { el.innerHTML = `<div style="padding:14px;text-align:center;color:var(--danger);font-size:12.5px">No valid rows found.</div>`; return; }
-      const existingByKey = new Set(allSessions.map(s => `${s.course}|${s.type}|${s.date}|${s.startTime}`));
-      const willUpdate = sessions.filter(s => existingByKey.has(`${s.course}|${s.type}|${s.date}|${s.startTime}`)).length;
+      // Match key includes topic — two different rotation stations can share
+      // the same (course, type, date, start time) when they run in parallel,
+      // and without topic in the key they'd incorrectly collide and overwrite
+      // each other instead of being treated as separate sessions.
+      const existingByKey = new Set(allSessions.map(s => `${s.course}|${s.type}|${s.date}|${s.startTime}|${normImportTopic(s.topic)}`));
+      const willUpdate = sessions.filter(s => existingByKey.has(`${s.course}|${s.type}|${s.date}|${s.startTime}|${normImportTopic(s.topic)}`)).length;
       const willCreate = sessions.length - willUpdate;
       const preview = sessions.slice(0, 8);
       el.innerHTML = `<div style="font-size:12px;color:var(--text-3);margin:8px 0">Found <strong>${sessions.length}</strong> rows — <strong>${willCreate}</strong> will be created as new, <strong>${willUpdate}</strong> match existing sessions and will be updated in place. Preview:</div>
@@ -2026,15 +2064,20 @@
       const btn = document.getElementById('import-confirm-btn');
       btn.disabled = true; statusEl.className = 'save-status saving';
 
-      // Build a lookup of existing sessions by course+type+date+startTime so
-      // a row that matches something already in the database updates that
-      // session in place instead of creating a visible duplicate.
+      // Build a lookup of existing sessions by course+type+date+startTime+topic
+      // so a row that matches something already in the database updates that
+      // session in place instead of creating a visible duplicate. Topic is
+      // included because multiple rotation stations routinely share the same
+      // time slot (very common for Year 2 labs) — without it, two different
+      // stations at the same time would incorrectly match the same existing
+      // row and silently overwrite each other instead of being treated as
+      // separate sessions.
       const existingByKey = new Map();
-      allSessions.forEach(s => existingByKey.set(`${s.course}|${s.type}|${s.date}|${s.startTime}`, s));
+      allSessions.forEach(s => existingByKey.set(`${s.course}|${s.type}|${s.date}|${s.startTime}|${normImportTopic(s.topic)}`, s));
 
       const toCreate = [], toUpdate = [];
       parsedSessions.forEach(session => {
-        const key = `${session.course}|${session.type}|${session.date}|${session.startTime}`;
+        const key = `${session.course}|${session.type}|${session.date}|${session.startTime}|${normImportTopic(session.topic)}`;
         const existing = existingByKey.get(key);
         if (existing) toUpdate.push({ existing, incoming: session }); else toCreate.push(session);
       });
