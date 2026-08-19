@@ -1522,6 +1522,7 @@
         <button id="year2-diagnostic-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">📊 Export Lab Diagnostic (Year 2 + 505)</button>
         <button id="fix-lab-years-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔍 Fix Lab Year Duplicates</button>
         <button id="clear-secondary-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🧹 Clear Leaked Secondary Instructor (315/317/319)</button>
+        <button id="delete-505-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔨 Delete 505 Rows (for rebuild)</button>
         <button id="import-csv-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>
       </span>`;
     const col = document.querySelector('.cal-column');
@@ -1530,6 +1531,7 @@
     document.getElementById('year2-diagnostic-btn').addEventListener('click', exportYear2LabDiagnostic);
     document.getElementById('fix-lab-years-btn').addEventListener('click', diagnoseAndFixLabYears);
     document.getElementById('clear-secondary-btn').addEventListener('click', clearYear2SickAnimalsSecondaryInstructor);
+    document.getElementById('delete-505-btn').addEventListener('click', delete505RowsForRebuild);
   }
 
   // One-time cleanup: the *correct* SRL data is the original 1-hour entries
@@ -1847,6 +1849,26 @@
       try { await batch.commit(); deleted += chunk.length; } catch (err) { console.error('[Year2 remaining delete error]', err); }
     }
     showToast(`Deleted ${deleted} rows — now import course_304_306_315_317_319_rebuild.csv via Import CSV`);
+  }
+
+  // One-time: deletes 505's LAB-type rows so the complete, correct 105-row
+  // set (course505_rebuild.csv) can be cleanly imported. Every single date
+  // was missing its partner station (same collision-era bug as Year 2, but
+  // 505 was never part of that rebuild, so it's been broken since the
+  // original bulk import). OSCE-type rows are a different `type` value and
+  // are structurally untouched by this LAB-only delete.
+  async function delete505RowsForRebuild() {
+    const matches = allSessions.filter(s => String(s.course)==='505' && s.type === 'LAB');
+    if (!matches.length) { showToast('No 505 LAB rows found — may already be cleared'); return; }
+    if (!confirm(`This will delete ${matches.length} LAB-type rows for course 505 (OSCE rows untouched). After this, import course505_rebuild.csv via Import CSV. Proceed?`)) return;
+    const BATCH_SIZE = 150; let deleted = 0;
+    for (let i = 0; i < matches.length; i += BATCH_SIZE) {
+      const chunk = matches.slice(i, i + BATCH_SIZE);
+      const batch = db.batch();
+      chunk.forEach(s => batch.delete(db.collection(SESSIONS_COL).doc(s.id)));
+      try { await batch.commit(); deleted += chunk.length; } catch (err) { console.error('[505 delete error]', err); }
+    }
+    showToast(`Deleted ${deleted} rows — now import course505_rebuild.csv via Import CSV`);
   }
 
   async function delete308RowsForRebuild() {
