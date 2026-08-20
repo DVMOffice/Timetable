@@ -304,6 +304,8 @@ select, input, textarea { font-family: inherit; color: inherit; }
 .lab-matrix-editable { cursor: pointer; transition: outline var(--transition); border-radius: 4px; }
 .lab-matrix-editable:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
 tr.lab-matrix-editable:hover td { background: var(--accent-light); }
+.roster-editable-cell { cursor: pointer; transition: background var(--transition); }
+.roster-editable-cell:hover { background: var(--accent-light); }
 
 /* Overlap cluster (2+ sessions at the same time) — Month-view style stacked mini-list */
 .tg-cluster {
