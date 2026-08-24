@@ -1248,6 +1248,65 @@
   }
 
   // ════════════════════════════════════════════════════════════
+  // COURSE LIST — read-only reference popup (static data, courseCatalog.js)
+  // ════════════════════════════════════════════════════════════
+  function openCourseList() {
+    const modal = document.getElementById('modal');
+    const catalog = window.COURSE_CATALOG;
+    if (!catalog) { showToast('Course list data not loaded', true); return; }
+
+    const groupsHtml = catalog.groups.map(g => {
+      const cls = g.curriculum === 'Legacy' ? 'catalog-group-legacy' : 'catalog-group-new';
+      const rowsHtml = g.rows.map(r => `
+        <tr>
+          <td class="catalog-num">${escapeHtml(r.subArea)} ${escapeHtml(r.courseNum)}</td>
+          <td>${escapeHtml(r.name)}</td>
+          <td class="catalog-sem">${escapeHtml(r.semester)}</td>
+          <td class="catalog-credits">${r.credits}</td>
+        </tr>`).join('');
+      return `
+        <div class="catalog-table-wrap ${cls}">
+          <div class="catalog-group-header">
+            <span>Year ${g.year}</span>
+            <span class="catalog-curriculum-tag">${escapeHtml(g.curriculum)}</span>
+          </div>
+          <table class="catalog-table">
+            <thead><tr><th>Course</th><th>Course Name</th><th>Semester</th><th style="text-align:right">Credits</th></tr></thead>
+            <tbody>
+              ${rowsHtml}
+              <tr class="catalog-total-row"><td colspan="3">${escapeHtml(g.totalLabel)}</td><td class="catalog-credits">${g.total}</td></tr>
+            </tbody>
+          </table>
+        </div>`;
+    }).join('');
+
+    modal.classList.add('catalog-modal');
+    modal.innerHTML = `
+      <div class="modal-backdrop" id="modal-backdrop"></div>
+      <div class="modal-box">
+        <div class="modal-strip"></div>
+        <button class="modal-close" id="modal-close">✕</button>
+        <div class="modal-header">
+          <div class="modal-title">📋 Course List</div>
+          <div class="modal-subtitle">VTMD / VETM course & credit reference — 2025-2026</div>
+        </div>
+        <div class="modal-body">
+          ${groupsHtml}
+        </div>
+        <div class="modal-footer">
+          <div></div>
+          <button class="btn btn-secondary" id="catalog-close-btn">Close</button>
+        </div>
+      </div>`;
+    modal.classList.add('open');
+    const close = () => { modal.classList.remove('catalog-modal'); closeForm(); };
+    document.getElementById('modal-close').onclick = close;
+    document.getElementById('modal-backdrop').onclick = close;
+    document.getElementById('catalog-close-btn').onclick = close;
+  }
+  document.getElementById('course-list-btn').addEventListener('click', openCourseList);
+
+  // ════════════════════════════════════════════════════════════
   // LAB ROTATION MATRIX POPUP — reconstructs the "Second Year Lab / 505 Lab"
   // style table from all sessions sharing one labGroupId(+column).
   // ════════════════════════════════════════════════════════════
