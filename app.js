@@ -753,16 +753,27 @@
   // into one runaway 8:30 cluster whenever an earlier session's span was long).
   // Each distinct start-time value becomes its own slot; a slot with 2+
   // sessions renders as a Month-view-style stacked mini-list with "+N more".
+  // Events this long (minutes) render as their own standalone block instead of
+  // being swept into a same-start-time mini-list with a short lecture. Without
+  // this, a full-day event (e.g. a Block Week orientation camp) sharing an exact
+  // start time with a 50-minute lecture would stretch the shared mini-list box
+  // to the full-day event's length, leaving a mostly-empty box with just its
+  // left border visible for the rest of the day — reads as a stray blue frame.
+  const LONG_EVENT_MIN = 240;
+
   function bucketEventsByStartTime(events) {
     const groups = new Map();
+    const longSingles = [];
     events.forEach(ev => {
+      if ((ev._end - ev._start) >= LONG_EVENT_MIN) { longSingles.push(ev); return; }
       const key = ev.startTime || '';
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(ev);
     });
-    return [...groups.values()]
-      .map(items => ({ start: Math.min(...items.map(i=>i._start)), end: Math.max(...items.map(i=>i._end)), items }))
-      .sort((a,b) => a.start - b.start);
+    const buckets = [...groups.values()]
+      .map(items => ({ start: Math.min(...items.map(i=>i._start)), end: Math.max(...items.map(i=>i._end)), items }));
+    longSingles.forEach(ev => buckets.push({ start: ev._start, end: ev._end, items: [ev] }));
+    return buckets.sort((a,b) => a.start - b.start);
   }
 
   // Different start-time buckets can still genuinely overlap in real time
@@ -1288,7 +1299,6 @@
         <button class="modal-close" id="modal-close">✕</button>
         <div class="modal-header">
           <div class="modal-title">📋 Course List</div>
-          <div class="modal-subtitle">VTMD / VETM course & credit reference — 2025-2026</div>
         </div>
         <div class="modal-body">
           ${groupsHtml}
