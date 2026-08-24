@@ -777,14 +777,25 @@
   }
 
   // Different start-time buckets can still genuinely overlap in real time
-  // (e.g. a Year 2 session 10:30–11:30 and a Year 3 session 10:45–12:15,
+  // (e.g. a 2xx session 10:30–11:30 and a 3xx session 10:45–12:15,
   // especially common in the "All Years" view). Give each such bucket its
   // own side-by-side lane instead of letting them paint on top of each other.
-  // Each cluster/lab-tile's items[0] carries the real session's Year — use it
-  // as a stable rank so the same course level always lands on the same side.
+  //
+  // Lane rank is derived from the COURSE NUMBER, not the session's stored
+  // 'year' field — the field can be missing/wrong on individual sessions
+  // (manual data entry drift), which throws lanes off even when the course
+  // number itself is perfectly fine. Course number is always present and
+  // unambiguous: 2xx -> left, 3xx -> middle, 4xx/5xx -> right. This holds
+  // for both curricula — New (200s/300s/400s) and Legacy (440, 500s).
+  function courseLaneRank(courseStr) {
+    const n = parseInt(courseStr, 10);
+    if (!Number.isFinite(n)) return 99; // non-numeric (e.g. 'TBC') sorts last, rightmost
+    if (n < 300) return 1;  // 2xx
+    if (n < 400) return 2;  // 3xx
+    return 3;                // 4xx / 5xx
+  }
   function laneRank(item) {
-    const yr = parseInt(item.items?.[0]?.year, 10);
-    return Number.isFinite(yr) ? yr : 99; // unknown years sort last (rightmost)
+    return courseLaneRank(item.items?.[0]?.course);
   }
 
   function assignLanes(clusters) {
@@ -795,9 +806,10 @@
       else { current = { items: [c], maxEnd: c.end }; groups.push(current); }
     });
     groups.forEach(g => {
-      // Within this overlap group, process items in Year order (1, 2, 3, …)
-      // so lower years always claim the lower (left) lane numbers, regardless
-      // of which items happen to start earliest or be processed first.
+      // Within this overlap group, process items in course-number rank order
+      // (2xx, then 3xx, then 4xx/5xx) so lower course numbers always claim
+      // the lower (left) lane numbers, regardless of which items happen to
+      // start earliest or be processed first.
       const byRank = new Map();
       g.items.forEach(c => {
         const r = laneRank(c);
