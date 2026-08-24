@@ -59,6 +59,43 @@ select, input, textarea { font-family: inherit; color: inherit; }
 .brand-line-2 { font-size: 23px; font-weight: 800; }
 .brand-line-3 { font-size: 16px; font-weight: 700; color: var(--text-2); }
 
+.course-list-btn {
+  margin-top: 8px; padding: 6px 10px; font-size: 11.5px; font-weight: 600;
+  color: var(--accent); background: var(--accent-light); border: 1px solid var(--accent);
+  border-radius: var(--radius); cursor: pointer; transition: all var(--transition); text-align: center;
+}
+.course-list-btn:hover { background: var(--accent); color: #fff; }
+
+/* ── Course List modal table ── */
+.catalog-modal .modal-box { width: min(760px, 96vw); }
+.catalog-table-wrap { margin-bottom: 18px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.catalog-table-wrap:last-child { margin-bottom: 4px; }
+.catalog-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.catalog-table th {
+  text-align: left; padding: 7px 10px; font-size: 10.5px; font-weight: 700; color: var(--text-3);
+  text-transform: uppercase; letter-spacing: .4px; background: var(--surface-2); border-bottom: 1px solid var(--border);
+}
+.catalog-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); color: var(--text); }
+.catalog-table tr:last-child td { border-bottom: none; }
+.catalog-table td.catalog-num { white-space: nowrap; font-weight: 600; }
+.catalog-table td.catalog-credits { text-align: right; white-space: nowrap; }
+.catalog-table td.catalog-sem { white-space: nowrap; }
+.catalog-table tr.catalog-total-row td { font-weight: 700; background: var(--surface-2); border-top: 1px solid var(--border-2); }
+.catalog-group-new    .catalog-table tbody tr:not(.catalog-total-row) { background: #EAF6EC; }
+.catalog-group-legacy .catalog-table tbody tr:not(.catalog-total-row) { background: #FBEEE0; }
+html.dark .catalog-group-new    .catalog-table tbody tr:not(.catalog-total-row) { background: #16281B; }
+html.dark .catalog-group-legacy .catalog-table tbody tr:not(.catalog-total-row) { background: #2E2416; }
+.catalog-group-header {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px; font-weight: 700; font-size: 12.5px;
+  background: var(--surface-3); border-bottom: 1px solid var(--border);
+}
+.catalog-curriculum-tag {
+  font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
+  padding: 2px 7px; border-radius: 999px;
+}
+.catalog-group-new .catalog-curriculum-tag { background: #C9EAD0; color: #1E5C2C; }
+.catalog-group-legacy .catalog-curriculum-tag { background: #F5D9BB; color: #8A4A15; }
+
 .filter-block-row-top { align-items: flex-start; }
 .week-btn-lines { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 
