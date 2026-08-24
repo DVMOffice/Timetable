@@ -799,37 +799,41 @@
   }
 
   function assignLanes(clusters) {
-    const groups = [];
-    let current = null;
-    clusters.forEach(c => {
-      if (current && c.start < current.maxEnd) { current.items.push(c); current.maxEnd = Math.max(current.maxEnd, c.end); }
-      else { current = { items: [c], maxEnd: c.end }; groups.push(current); }
+    // Fixed banding: each rank (2xx / 3xx / 4xx-5xx) gets its own
+    // FIXED-WIDTH band for the entire day, not just within whichever
+    // moment happens to be overlapping. The old approach counted lanes
+    // per locally-overlapping time window — so if three 2xx sessions
+    // happened to overlap each other around 9am, the 2xx group alone
+    // needed 2 lanes right then, which pushed 3xx/4xx-5xx further right
+    // for that window only. An hour later, with fewer things overlapping,
+    // the same 3xx course would land in a different horizontal spot.
+    // That's the "messy"/shifting-column look. Fixing each rank to its
+    // own band for the whole day keeps 2xx always left, 3xx always
+    // middle, 4xx/5xx always right — no matter what else is scheduled
+    // nearby in time.
+    const ranksPresent = [...new Set(clusters.map(laneRank))].sort((a,b) => a-b);
+    const bandOf = new Map(ranksPresent.map((r,i) => [r, i]));
+    const bandCount = ranksPresent.length || 1;
+
+    // Within a band, sessions of that same rank that genuinely overlap
+    // each other in time still need their own sub-lanes — but now that
+    // packing only competes for space within its own band's width,
+    // never borrowing from (or ceding to) another band.
+    ranksPresent.forEach(r => {
+      const items = clusters.filter(c => laneRank(c) === r).sort((a,b) => a.start - b.start);
+      const laneEnds = [];
+      items.forEach(c => {
+        let lane = laneEnds.findIndex(end => end <= c.start);
+        if (lane === -1) { lane = laneEnds.length; laneEnds.push(c.end); } else { laneEnds[lane] = c.end; }
+        c.subLane = lane;
+      });
+      const subLaneCount = laneEnds.length || 1;
+      items.forEach(c => { c.subLaneCount = subLaneCount; });
     });
-    groups.forEach(g => {
-      // Within this overlap group, process items in course-number rank order
-      // (2xx, then 3xx, then 4xx/5xx) so lower course numbers always claim
-      // the lower (left) lane numbers, regardless of which items happen to
-      // start earliest or be processed first.
-      const byRank = new Map();
-      g.items.forEach(c => {
-        const r = laneRank(c);
-        if (!byRank.has(r)) byRank.set(r, []);
-        byRank.get(r).push(c);
-      });
-      const ranks = [...byRank.keys()].sort((a,b) => a-b);
-      let laneOffset = 0;
-      ranks.forEach(r => {
-        const items = byRank.get(r).sort((a,b) => a.start - b.start);
-        const laneEnds = [];
-        items.forEach(c => {
-          let lane = laneEnds.findIndex(end => end <= c.start);
-          if (lane === -1) { lane = laneEnds.length; laneEnds.push(c.end); } else { laneEnds[lane] = c.end; }
-          c.lane = laneOffset + lane;
-        });
-        laneOffset += laneEnds.length;
-      });
-      const laneCount = laneOffset;
-      g.items.forEach(c => c.laneCount = laneCount);
+
+    clusters.forEach(c => {
+      c.bandIndex = bandOf.get(laneRank(c));
+      c.bandCount = bandCount;
     });
     return clusters;
   }
@@ -947,9 +951,12 @@
 
       renderItems.forEach(cluster => {
         const topPct = timeline.toPct(cluster.start), heightPct = Math.max(timeline.toPct(cluster.end) - topPct, 2);
-        const laneCount = cluster.laneCount || 1, lane = cluster.lane || 0;
-        const laneWidth = 100 / laneCount;
-        const posStyle = `top:${topPct}%;height:${heightPct}%;left:calc(${lane*laneWidth}% + 2px);width:calc(${laneWidth}% - 4px)`;
+        const bandCount = cluster.bandCount || 1, bandIndex = cluster.bandIndex || 0;
+        const subLaneCount = cluster.subLaneCount || 1, subLane = cluster.subLane || 0;
+        const bandWidth = 100 / bandCount;
+        const subLaneWidth = bandWidth / subLaneCount;
+        const leftPct = bandIndex * bandWidth + subLane * subLaneWidth;
+        const posStyle = `top:${topPct}%;height:${heightPct}%;left:calc(${leftPct}% + 2px);width:calc(${subLaneWidth}% - 4px)`;
 
         if (cluster.isLabTile) {
           const singleHasRealGroup = cluster.items.length === 1 && (() => {
