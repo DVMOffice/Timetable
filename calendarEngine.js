@@ -8,6 +8,22 @@ const CalendarEngine = (() => {
   function dateKey(d) { return d.toISOString().slice(0,10); }
   function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate()+n); return r; }
 
+  // Calendar-day difference between two Dates, immune to Daylight Saving
+  // Time. Naive subtraction of two local-midnight Date objects (b - a) is
+  // WRONG whenever a DST transition falls between them: the "spring
+  // forward" day is only 23 hours long locally, so the raw millisecond
+  // difference comes out short by one hour — e.g. Calgary's Mar 14→15,
+  // 2027 transition made every date afterward compute as 0.9583 days
+  // short of a full week, which Math.floor() then silently rounded down,
+  // under-counting the week number by 1 for the rest of the year. Diffing
+  // the UTC calendar-date components instead sidesteps wall-clock time
+  // (and DST) entirely — it's just counting days on a calendar.
+  function daysBetween(a, b) {
+    const utcA = Date.UTC(a.getFullYear(), a.getMonth(), a.getDate());
+    const utcB = Date.UTC(b.getFullYear(), b.getMonth(), b.getDate());
+    return Math.round((utcB - utcA) / 86400000);
+  }
+
   function isToday(d) {
     const t = new Date();
     return d.getFullYear()===t.getFullYear() && d.getMonth()===t.getMonth() && d.getDate()===t.getDate();
@@ -55,7 +71,7 @@ const CalendarEngine = (() => {
   function calcAcademicWeekNumber(dateStr) {
     const d = new Date(dateStr + 'T12:00:00');
     d.setHours(0,0,0,0);
-    const diffDays = Math.floor((d - WEEK1_START) / 86400000);
+    const diffDays = daysBetween(WEEK1_START, d);
     return Math.floor(diffDays / 7) + 1;
   }
 
@@ -143,9 +159,9 @@ const CalendarEngine = (() => {
   function calcSemesterWeek(dateStr) {
     const d = new Date(dateStr + 'T12:00:00'); d.setHours(0,0,0,0);
     if (d >= WINTER_WEEK1_START) {
-      return { semester: 'winter', week: Math.floor((d - WINTER_WEEK1_START) / 86400000 / 7) + 1 };
+      return { semester: 'winter', week: Math.floor(daysBetween(WINTER_WEEK1_START, d) / 7) + 1 };
     }
-    return { semester: 'fall', week: Math.max(1, Math.floor((d - FALL_WEEK1_START) / 86400000 / 7) + 1) };
+    return { semester: 'fall', week: Math.max(1, Math.floor(daysBetween(FALL_WEEK1_START, d) / 7) + 1) };
   }
   function weekHeaderLabelSem(days, semester, weekNum) {
     const first = days[0], last = days[days.length-1];
@@ -158,9 +174,9 @@ const CalendarEngine = (() => {
   // TIME-GRID MATH (variable-duration proportional blocks)
   // Day runs 8:30am–4:30pm = 480 minutes, on a 5-minute backend grid.
   // ════════════════════════════════════════════════════════════
-  const DAY_START_MIN = 8*60 + 30;  // 510
+  const DAY_START_MIN = 7*60 + 30;  // 450
   const DAY_END_MIN   = 16*60 + 30; // 990
-  const DAY_SPAN_MIN  = DAY_END_MIN - DAY_START_MIN; // 480
+  const DAY_SPAN_MIN  = DAY_END_MIN - DAY_START_MIN; // 540
 
   function timeToMinutes(hhmm) {
     if (!hhmm) return null;
