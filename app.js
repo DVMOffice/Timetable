@@ -380,11 +380,21 @@
 
   // Prefer the stored last-name-only display field (new lab data); fall back
   // to deriving one from the full name for older sessions that don't have it.
+  //
+  // 'full' can hold MULTIPLE comma-separated names (e.g. a rotation
+  // station's secondary instructor list: "Betty-Jo Bradley, Erin
+  // Fierheller, Angelica Petersen Dias, Vinicius De Anhaia Camargo").
+  // Each name is shortened to its own last word independently — taking
+  // the last word of the WHOLE string would collapse all of them down
+  // to just the final person, silently dropping everyone else in the list.
   function shortInstructorName(full, display) {
     if (display) return display;
     if (!full) return '';
-    const parts = full.trim().split(/\s+/);
-    return parts[parts.length - 1];
+    return full.split(',')
+      .map(part => part.trim())
+      .filter(Boolean)
+      .map(name => { const words = name.split(/\s+/); return words[words.length - 1]; })
+      .join(', ');
   }
   function tileInstructorNames(s) {
     const names = [shortInstructorName(s.primaryInstructor, s.primaryInstructorDisplay), shortInstructorName(s.secondaryInstructor, s.secondaryInstructorDisplay)].filter(Boolean);
@@ -766,7 +776,14 @@
     const longSingles = [];
     events.forEach(ev => {
       if ((ev._end - ev._start) >= LONG_EVENT_MIN) { longSingles.push(ev); return; }
-      const key = ev.startTime || '';
+      // Key includes the course's lane rank, not just the clock time —
+      // otherwise a 3xx and a 5xx session sharing an 8:30 start get zipped
+      // into one shared box, and that box can only carry ONE rank for band
+      // placement (whichever session happened to be first), dragging the
+      // other course into the wrong band along with it. Same-rank sessions
+      // sharing a start time still merge into one compact mini-list, same
+      // as before — that part of the behavior is unchanged and intentional.
+      const key = courseLaneRank(ev.course) + '|' + (ev.startTime || '');
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(ev);
     });
@@ -816,19 +833,31 @@
     const bandCount = ranksPresent.length || 1;
 
     // Within a band, sessions of that same rank that genuinely overlap
-    // each other in time still need their own sub-lanes — but now that
-    // packing only competes for space within its own band's width,
-    // never borrowing from (or ceding to) another band.
+    // each other in time still need their own sub-lanes — but that
+    // packing is scoped to LOCAL time-overlap windows within the band,
+    // not the whole day. Sizing every same-rank session off a single
+    // day-wide sub-lane count meant an isolated session at 10am could get
+    // squeezed to half-width just because two *other* same-rank sessions
+    // happened to overlap each other at 9am — leaving it needlessly
+    // narrow (truncated text) and leaving the rest of its band empty.
     ranksPresent.forEach(r => {
       const items = clusters.filter(c => laneRank(c) === r).sort((a,b) => a.start - b.start);
-      const laneEnds = [];
+      const groups = [];
+      let current = null;
       items.forEach(c => {
-        let lane = laneEnds.findIndex(end => end <= c.start);
-        if (lane === -1) { lane = laneEnds.length; laneEnds.push(c.end); } else { laneEnds[lane] = c.end; }
-        c.subLane = lane;
+        if (current && c.start < current.maxEnd) { current.items.push(c); current.maxEnd = Math.max(current.maxEnd, c.end); }
+        else { current = { items: [c], maxEnd: c.end }; groups.push(current); }
       });
-      const subLaneCount = laneEnds.length || 1;
-      items.forEach(c => { c.subLaneCount = subLaneCount; });
+      groups.forEach(g => {
+        const laneEnds = [];
+        g.items.forEach(c => {
+          let lane = laneEnds.findIndex(end => end <= c.start);
+          if (lane === -1) { lane = laneEnds.length; laneEnds.push(c.end); } else { laneEnds[lane] = c.end; }
+          c.subLane = lane;
+        });
+        const subLaneCount = laneEnds.length;
+        g.items.forEach(c => { c.subLaneCount = subLaneCount; });
+      });
     });
 
     clusters.forEach(c => {
@@ -2442,11 +2471,21 @@
   // ════════════════════════════════════════════════════════════
   // MOBILE FILTER PANEL COLLAPSE
   // ════════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════
+  // FILTER PANEL COLLAPSE (all screen sizes — desktop can minimize too)
+  // ════════════════════════════════════════════════════════════
+  function syncFilterToggleLabel() {
+    const inner = document.getElementById('filter-bar-inner');
+    const btn = document.getElementById('filter-toggle-btn');
+    const isOpen = getComputedStyle(inner).display !== 'none';
+    btn.textContent = isOpen ? 'Filters ▴' : 'Filters ▾';
+  }
   document.getElementById('filter-toggle-btn').addEventListener('click', () => {
-    const wrap = document.getElementById('filter-bar-wrap');
-    const expanded = wrap.classList.toggle('expanded');
-    document.getElementById('filter-toggle-btn').textContent = expanded ? 'Filters ▴' : 'Filters ▾';
+    document.getElementById('filter-bar-wrap').classList.toggle('toggled');
+    syncFilterToggleLabel();
   });
+  window.addEventListener('resize', syncFilterToggleLabel);
+  syncFilterToggleLabel();
 
   // ════════════════════════════════════════════════════════════
   // SIDE PANEL (Latest Updates / Data Export) COLLAPSE TOGGLE
