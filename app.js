@@ -20,6 +20,7 @@
   const HISTORY_COL   = 'sessions_history';
   const CHANGELOG_COL = 'change_log';
   const ROSTER_COL    = 'roster';
+  const SETTINGS_COL  = 'settings';
 
   const connDot  = document.getElementById('conn-dot');
   const connText = document.getElementById('conn-text');
@@ -67,6 +68,7 @@
     }
   );
   subscribeRoster();
+  subscribeRosterNotice();
 
   // ── Latest Updates feed (from change_log — one grouped doc per save) ──
   let latestChanges = [];
@@ -244,6 +246,33 @@
   let rosterData = { year1: [], year2: [], year3: [] };
   let rosterMigrated = false;
 
+  // The grey notice line under the roster title ("Look up your group by
+  // UCID...") changes wording occasionally as communication with students
+  // evolves, so it's admin-editable and stored in Firestore rather than
+  // hardcoded — same click-to-edit pattern as the group cells below.
+  const DEFAULT_ROSTER_NOTICE = "Look up your group by UCID. Names aren't shown here since this page is public — cross-reference your UCID against the roster your program shared with you.";
+  let rosterNotice = DEFAULT_ROSTER_NOTICE;
+
+  function subscribeRosterNotice() {
+    db.collection(SETTINGS_COL).doc('rosterNotice').onSnapshot(doc => {
+      rosterNotice = (doc.exists && doc.data().text) ? doc.data().text : DEFAULT_ROSTER_NOTICE;
+      if (document.getElementById('modal').classList.contains('open')) {
+        const openYear = document.getElementById('modal').dataset.rosterYear;
+        if (openYear) openGroupRoster(openYear);
+      }
+    }, err => console.error('[Roster notice listener error]', err));
+  }
+
+  async function updateRosterNotice(newText) {
+    try {
+      await db.collection(SETTINGS_COL).doc('rosterNotice').set({ text: newText, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      showToast('Notice updated');
+    } catch (err) {
+      console.error('[Roster notice update error]', err);
+      showToast('Failed to update — check console', true);
+    }
+  }
+
   function subscribeRoster() {
     db.collection(ROSTER_COL).onSnapshot(snap => {
       if (snap.empty) { rosterMigrated = false; return; }
@@ -343,7 +372,7 @@
         <button class="modal-close" id="modal-close">✕</button>
         <div class="modal-header">
           <div class="modal-title">🧑‍🤝‍🧑 ${escapeHtml(title)}</div>
-          <div class="modal-subtitle">Look up your group by UCID. Names aren't shown here since this page is public — cross-reference your UCID against the roster your program shared with you.${editable ? ' <span style="color:var(--accent);font-weight:600">Admin: click any group cell to change it.</span>' : ''}</div>
+          <div class="modal-subtitle">${escapeHtml(rosterNotice)}${isAdmin ? ' <button id="edit-roster-notice-btn" class="btn btn-secondary" style="padding:1px 8px;font-size:10.5px;margin-left:6px;vertical-align:middle">✎ Edit note</button>' : ''}${editable ? '<span style="color:var(--accent);font-weight:600"> · Admin: click any group cell to change it.</span>' : ''}</div>
         </div>
         <div class="modal-body">
           ${migrationNotice}
@@ -362,6 +391,13 @@
     modal.classList.add('open');
     if (isAdmin && !rosterMigrated) {
       document.getElementById('migrate-roster-btn').onclick = migrateRosterToFirestore;
+    }
+    if (isAdmin) {
+      document.getElementById('edit-roster-notice-btn').onclick = () => {
+        const next = prompt('Edit the note shown to students on this page:', rosterNotice);
+        if (next === null || next.trim() === rosterNotice) return;
+        updateRosterNotice(next.trim());
+      };
     }
     if (editable) {
       modal.querySelectorAll('.roster-editable-cell').forEach(cell => {
@@ -1531,7 +1567,7 @@
               </div>
               <div class="form-field"><label class="form-label">Type</label>
                 <select class="form-select" id="f-type">
-                  ${['LEC','LAB','SRL','Quiz/Midterm','OSCE','Exam'].map(t => `<option value="${t}" ${s.type===t?'selected':''}>${t}</option>`).join('')}
+                  ${['LEC','LAB','SRL','Quiz/Midterm','OSCE','Exam','Holiday','Event'].map(t => `<option value="${t}" ${s.type===t?'selected':''}>${t}</option>`).join('')}
                 </select>
               </div>
               <div class="form-field full"><label class="form-label">Course</label>
@@ -1626,8 +1662,8 @@
       year: document.getElementById('f-year').value,
       type: document.getElementById('f-type').value,
       course: courseCode,
-      courseName: courseInfo ? courseInfo.name : existing?.courseName,
-      courseDept: courseInfo ? courseInfo.dept : existing?.courseDept,
+      courseName: courseInfo ? courseInfo.name : (existing?.courseName || ''),
+      courseDept: courseInfo ? courseInfo.dept : (existing?.courseDept || ''),
       startTime: document.getElementById('f-start').value,
       endTime: document.getElementById('f-end').value,
       topic: document.getElementById('f-topic').value.trim(),
@@ -1642,7 +1678,10 @@
     if (groupField) data.group = groupField.value.trim();
     delete data.id;
 
-    if (!data.course || !data.date || !data.startTime) {
+    // Holiday and Event sessions are just calendar markers — no field is
+    // required (no course, no date, no time). Every other session type
+    // still needs Course, Date, and Start Time to render/filter sensibly.
+    if (!['Holiday','Event'].includes(data.type) && (!data.course || !data.date || !data.startTime)) {
       statusEl.className = 'save-status error'; statusEl.textContent = 'Course, Date, and Start Time are required';
       return;
     }
