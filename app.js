@@ -16,6 +16,20 @@
   };
   firebase.initializeApp(firebaseConfig);
   const db = firebase.firestore();
+  // Cache reads/writes locally (IndexedDB) so a repeat visit hydrates from
+  // disk instead of re-downloading the whole dataset from the server, and
+  // the live listeners below only pull deltas afterward. Falls back to
+  // today's network-only behavior (no functional change) if another tab
+  // already holds the persistence lock, or the browser doesn't support it.
+  db.enablePersistence().catch(err => {
+    if (err.code === 'failed-precondition') {
+      console.warn('[Firestore] Offline cache unavailable — another tab has it open; this tab will run without it.');
+    } else if (err.code === 'unimplemented') {
+      console.warn('[Firestore] Offline cache not supported in this browser; running without it.');
+    } else {
+      console.error('[Firestore] enablePersistence error', err);
+    }
+  });
   const SESSIONS_COL  = 'sessions';
   const HISTORY_COL   = 'sessions_history';
   const CHANGELOG_COL = 'change_log';
@@ -49,26 +63,46 @@
   let colorsOn = JSON.parse(localStorage.getItem('timetable_colors') ?? 'true');
 
   // ════════════════════════════════════════════════════════════
-  // FIRESTORE LIVE LISTENER
+  // FIRESTORE LIVE LISTENER — scoped to the currently selected semester
+  // (Fall or Winter) instead of the whole year, so a permanently-open tab
+  // only has to resync one semester's worth of documents on every
+  // reconnect (network drop, laptop sleep, tab backgrounded) rather than
+  // the entire collection. Re-started whenever currentSemester changes
+  // (semester toggle, or the month dropdown crossing into the other
+  // semester). Search and the Course dropdown are therefore also scoped
+  // to whichever semester is currently loaded — consistent with how the
+  // Week buttons and Month dropdown already partition Fall vs Winter.
   // ════════════════════════════════════════════════════════════
-  db.collection(SESSIONS_COL).onSnapshot(
-    snap => {
-      allSessions = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      connDot.className = 'conn-dot online';
-      connText.textContent = 'Connected';
-      populateWeekButtons();
-      populateUpdatesFilters();
-      renderAll();
-    },
-    err => {
-      console.error('[Firestore]', err);
-      connDot.className = 'conn-dot error';
-      connText.textContent = 'Connection error';
-      showToast('Could not connect to the database', true);
-    }
-  );
-  subscribeRoster();
+  const WINTER_START_KEY = dateKey(weekMondaySem('winter', 1));
+  let unsubscribeSessions = null;
+  function startSessionsListener(semester) {
+    if (unsubscribeSessions) { unsubscribeSessions(); unsubscribeSessions = null; }
+    const query = semester === 'winter'
+      ? db.collection(SESSIONS_COL).where('date', '>=', WINTER_START_KEY)
+      : db.collection(SESSIONS_COL).where('date', '<', WINTER_START_KEY);
+    unsubscribeSessions = query.onSnapshot(
+      snap => {
+        allSessions = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        connDot.className = 'conn-dot online';
+        connText.textContent = 'Connected';
+        populateWeekButtons();
+        populateUpdatesFilters();
+        renderAll();
+      },
+      err => {
+        console.error('[Firestore]', err);
+        connDot.className = 'conn-dot error';
+        connText.textContent = 'Connection error';
+        showToast('Could not connect to the database', true);
+      }
+    );
+  }
+  startSessionsListener(currentSemester);
   subscribeRosterNotice();
+  // Roster listener is started lazily (see startRosterListener) the first
+  // time someone actually opens the roster modal — most visitors never do,
+  // so there's no reason to hold a live listener over the whole ~250-doc
+  // roster collection for every page load.
 
   // ── Latest Updates feed (from change_log — one grouped doc per save) ──
   let latestChanges = [];
@@ -144,6 +178,7 @@
         calView = 'week';
         document.getElementById('cal-week-btn').classList.add('active');
         document.getElementById('cal-month-btn').classList.remove('active');
+        syncSemesterToCalDate();
         renderCalendar();
       });
     });
@@ -273,8 +308,15 @@
     }
   }
 
-  function subscribeRoster() {
-    db.collection(ROSTER_COL).onSnapshot(snap => {
+  // Started on-demand when the roster modal opens, stopped when it closes
+  // (see startRosterListener / stopRosterListener) — kept as a live
+  // onSnapshot rather than a one-time get() so two admins editing the
+  // roster at the same time still see each other's changes while the
+  // modal is open, same as before.
+  let unsubscribeRoster = null;
+  function startRosterListener() {
+    if (unsubscribeRoster) return;
+    unsubscribeRoster = db.collection(ROSTER_COL).onSnapshot(snap => {
       if (snap.empty) { rosterMigrated = false; return; }
       rosterMigrated = true;
       const grouped = { year1: [], year2: [], year3: [] };
@@ -288,6 +330,9 @@
         if (openYear) openGroupRoster(openYear);
       }
     }, err => console.error('[Roster listener error]', err));
+  }
+  function stopRosterListener() {
+    if (unsubscribeRoster) { unsubscribeRoster(); unsubscribeRoster = null; }
   }
 
   function getRosterForYear(year) {
@@ -332,6 +377,7 @@
   }
 
   function openGroupRoster(rosterYear) {
+    startRosterListener();
     const modal = document.getElementById('modal');
     modal.dataset.rosterYear = rosterYear;
     const students = getRosterForYear(rosterYear) || [];
@@ -553,6 +599,7 @@
         if (wantSemester !== currentSemester) {
           currentSemester = wantSemester;
           document.querySelectorAll('#semester-btn-row .pill-btn').forEach(b => b.classList.toggle('active', b.dataset.semester===wantSemester));
+          startSessionsListener(currentSemester);
         }
         filters.week = 'all'; filters.weekSemester = currentSemester;
         populateWeekButtons();
@@ -582,6 +629,7 @@
     document.querySelectorAll('#semester-btn-row .pill-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     currentSemester = btn.dataset.semester;
+    startSessionsListener(currentSemester);
     filters.week = 'all'; filters.weekSemester = currentSemester;
     populateWeekButtons();
     calDate = weekMondaySem(currentSemester, 1);
@@ -1192,18 +1240,29 @@
   // ════════════════════════════════════════════════════════════
   // CALENDAR NAVIGATION
   // ════════════════════════════════════════════════════════════
+  // Keeps currentSemester (and therefore the scoped sessions listener) in
+  // sync with whatever date the calendar is actually showing — needed on
+  // every navigation, not just when a specific Week filter is active,
+  // since the prev/next arrows can walk calDate across the Fall/Winter
+  // boundary on their own (e.g. browsing week-by-week with "All Weeks"
+  // selected).
+  function syncSemesterToCalDate() {
+    const sw = calcSemesterWeek(dateKey(calDate));
+    if (sw.semester !== currentSemester) {
+      currentSemester = sw.semester;
+      document.querySelectorAll('#semester-btn-row .pill-btn').forEach(b => b.classList.toggle('active', b.dataset.semester===sw.semester));
+      startSessionsListener(currentSemester);
+    }
+    return sw;
+  }
+
   // When a specific Week filter is active, keep it in sync with whatever
   // week the calendar is actually showing — otherwise navigating with the
   // arrows leaves the filter pointing at the old week and the view goes
   // blank (nothing matches the stale week number anymore).
   function syncWeekFilterToCalDate() {
+    const sw = syncSemesterToCalDate();
     if (calView !== 'week' || filters.week === 'all') return;
-    const days = buildWeekDays(calDate);
-    const sw = calcSemesterWeek(dateKey(days[0]));
-    if (sw.semester !== currentSemester) {
-      currentSemester = sw.semester;
-      document.querySelectorAll('#semester-btn-row .pill-btn').forEach(b => b.classList.toggle('active', b.dataset.semester===sw.semester));
-    }
     filters.week = String(sw.week);
     filters.weekSemester = sw.semester;
     populateWeekButtons();
@@ -1241,7 +1300,7 @@
 
   function resetFilters() {
     filters = { search:'', year:'all', month:'all', week:'all', weekSemester:'fall', course:'all', type:'all' };
-    currentSemester = 'fall';
+    if (currentSemester !== 'fall') { currentSemester = 'fall'; startSessionsListener(currentSemester); }
     document.getElementById('search-input').value = '';
     document.getElementById('filter-month').value = 'all';
     document.getElementById('filter-type').value = 'all';
@@ -1340,6 +1399,7 @@
   function closeForm() {
     const modal = document.getElementById('modal');
     modal.classList.remove('open'); modal.innerHTML = '';
+    stopRosterListener();
   }
 
   // ════════════════════════════════════════════════════════════
@@ -1746,8 +1806,20 @@
   // ════════════════════════════════════════════════════════════
   // ADMIN MODE (bottom bar text button)
   // ════════════════════════════════════════════════════════════
-  const ADMIN_PASSWORD = 'dvmprogram'; // ← change this to update the admin password
-  let isAdmin = sessionStorage.getItem('timetable_admin') === '1';
+  // Real Firebase Authentication (email/password), enforced server-side by
+  // the Firestore rule (allow write: if request.auth != null && request
+  // .auth.token.email == 'dvmprogram@ucalgary.ca') — replaces the old
+  // client-side-only password compare, which was never a real access
+  // control (anyone could read it straight out of this public file).
+  // The single-prompt UX is kept for familiarity: one admin account, so
+  // only the password is asked for and paired with the fixed email below.
+  const ADMIN_EMAIL = 'dvmprogram@ucalgary.ca';
+  let isAdmin = false;
+
+  firebase.auth().onAuthStateChanged(user => {
+    isAdmin = !!user;
+    updateAdminUI();
+  });
 
   function updateAdminUI() {
     const btn = document.getElementById('admin-toggle');
@@ -1758,10 +1830,25 @@
     renderAll();
   }
   document.getElementById('admin-toggle').addEventListener('click', () => {
-    if (isAdmin) { isAdmin = false; sessionStorage.removeItem('timetable_admin'); showToast('Admin mode off'); updateAdminUI(); return; }
+    if (isAdmin) {
+      firebase.auth().signOut().then(() => showToast('Admin mode off'));
+      return;
+    }
     const entered = prompt('Enter admin password:');
-    if (entered === ADMIN_PASSWORD) { isAdmin = true; sessionStorage.setItem('timetable_admin', '1'); showToast('Admin mode on'); updateAdminUI(); }
-    else if (entered !== null) showToast('Incorrect password', true);
+    if (entered === null) return;
+    firebase.auth().signInWithEmailAndPassword(ADMIN_EMAIL, entered)
+      .then(() => showToast('Admin mode on'))
+      .catch(err => {
+        console.error('[Admin sign-in error]', err);
+        const msg = err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential' || err.code === 'auth/invalid-login-credentials'
+          ? 'Incorrect password'
+          : err.code === 'auth/unauthorized-domain'
+          ? 'This domain isn\'t authorized for sign-in yet — check console'
+          : err.code === 'auth/user-not-found'
+          ? 'Admin account not set up yet — check console'
+          : `Sign-in failed (${err.code || 'unknown error'}) — check console`;
+        showToast(msg, true);
+      });
   });
 
   function renderStatusBanner() {
@@ -2570,7 +2657,11 @@
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeForm(); });
   window.addEventListener('resize', syncSideColumnHeight);
 
-  // Initial render
+  // Initial render — correct currentSemester (hardcoded 'fall' at
+  // declaration) to whichever semester "today" actually falls in before
+  // the first render, so loading the site on a Winter date doesn't start
+  // out scoped to the wrong (empty) semester.
+  syncSemesterToCalDate();
   populateWeekButtons();
   populateCourseDropdown('all');
   updateAdminUI();
