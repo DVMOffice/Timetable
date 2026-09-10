@@ -17,13 +17,23 @@
   firebase.initializeApp(firebaseConfig);
   const db = firebase.firestore();
   // Cache reads/writes locally (IndexedDB) so a repeat visit hydrates from
-  // disk instead of re-downloading the whole dataset from the server, and
-  // the live listeners below only pull deltas afterward. Falls back to
-  // today's network-only behavior (no functional change) if another tab
-  // already holds the persistence lock, or the browser doesn't support it.
-  db.enablePersistence().catch(err => {
+  // disk instead of re-downloading the whole dataset from the server.
+  // synchronizeTabs:true is required here — the sentinel-doc cache-first
+  // check below (SESSIONS DATA section) uses localStorage, which is
+  // shared across every tab of this browser, to decide whether it's safe
+  // to read from Firestore's LOCAL cache instead of the server. Without
+  // synchronizeTabs, only the first tab actually gets the persisted disk
+  // cache — every other tab silently falls back to an empty per-tab
+  // memory-only cache, so a {source:'cache'} read in that second tab
+  // would wrongly resolve with 0 docs instead of throwing, since
+  // localStorage still says "this version is cached" even though this
+  // particular tab has nothing. synchronizeTabs lets every open tab share
+  // the one real persisted cache, so this check is valid regardless of
+  // how many tabs are open. Falls back to network-only (no functional
+  // change) if the browser doesn't support persistence at all.
+  db.enablePersistence({ synchronizeTabs: true }).catch(err => {
     if (err.code === 'failed-precondition') {
-      console.warn('[Firestore] Offline cache unavailable — another tab has it open; this tab will run without it.');
+      console.warn('[Firestore] Offline cache unavailable in this tab; running without it.');
     } else if (err.code === 'unimplemented') {
       console.warn('[Firestore] Offline cache not supported in this browser; running without it.');
     } else {
@@ -62,42 +72,103 @@
   let filters = { search: '', year: 'all', month: 'all', week: 'all', weekSemester: 'fall', course: 'all', type: 'all' };
   let colorsOn = JSON.parse(localStorage.getItem('timetable_colors') ?? 'true');
 
-  // ════════════════════════════════════════════════════════════
-  // FIRESTORE LIVE LISTENER — scoped to the currently selected semester
-  // (Fall or Winter) instead of the whole year, so a permanently-open tab
-  // only has to resync one semester's worth of documents on every
-  // reconnect (network drop, laptop sleep, tab backgrounded) rather than
-  // the entire collection. Re-started whenever currentSemester changes
-  // (semester toggle, or the month dropdown crossing into the other
-  // semester). Search and the Course dropdown are therefore also scoped
-  // to whichever semester is currently loaded — consistent with how the
-  // Week buttons and Month dropdown already partition Fall vs Winter.
-  // ════════════════════════════════════════════════════════════
+  
+  // SESSIONS DATA — event driven refresh via a lightweight sentinel doc
+  // (Spark-plan hotfix). Instead of a live
+  // onSnapshot on the whole sessions collection  which re-pays a full
+  // collection read on every connect AND every reconnect (WiFi drop,
+  // phone lock, laptop sleep) regardless of whether the data changed,
+  // every client holds one onSnapshot on a single tiny doc,
+  // settings/sessionsVersion, which the app's own write code bumps
+  // whenever it actually changes something in sessions (see the write
+  // sites below, each does a batch.set on this doc alongside its real
+  // write). When that sentinel fires, we compare its value against the
+  // last version this browser confirmed it had synced (stored in
+  // localStorage): if they match, nothing has changed since we last
+  // fetched, so we read straight from Firestore's local persistence
+  // cache. Free, no server round-trip, not billed against quota. If
+  // they don't match (or nothing's cached yet, e.g. a brand-new
+  // browser), we do a real server fetch and remember the new version.
   const WINTER_START_KEY = dateKey(weekMondaySem('winter', 1));
-  let unsubscribeSessions = null;
-  function startSessionsListener(semester) {
-    if (unsubscribeSessions) { unsubscribeSessions(); unsubscribeSessions = null; }
+  const SESSIONS_VERSION_KEY = 'timetable_sessions_version';
+
+  async function refreshSessions(semester, source) {
+    // Temp debug, remove before merging to main. Makes it obvious in the
+    // console which path each refetch actually took.
+    console.log(`%c[sentinel] refreshSessions(${semester}, ${source})`, 'color:#0a7');
     const query = semester === 'winter'
       ? db.collection(SESSIONS_COL).where('date', '>=', WINTER_START_KEY)
       : db.collection(SESSIONS_COL).where('date', '<', WINTER_START_KEY);
-    unsubscribeSessions = query.onSnapshot(
-      snap => {
-        allSessions = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        connDot.className = 'conn-dot online';
-        connText.textContent = 'Connected';
-        populateWeekButtons();
-        populateUpdatesFilters();
-        renderAll();
-      },
-      err => {
-        console.error('[Firestore]', err);
-        connDot.className = 'conn-dot error';
-        connText.textContent = 'Connection error';
-        showToast('Could not connect to the database', true);
+    try {
+      let snap;
+      try {
+        snap = await query.get({ source });
+        // A cache read can resolve successfully with 0 docs instead of
+        // throwing when this tab's local cache turns out to be empty
+        // (e.g. persistence never enabled for this tab, or hasn't
+        // finished syncing yet) — localStorage's stored version can't
+        // distinguish that from "genuinely nothing changed," so treat an
+        // empty cache result the same as a cache-miss and go to the
+        // server rather than silently showing 0 sessions.
+        if (source === 'cache' && snap.empty) throw new Error('empty-cache-result');
+        console.log(`%c[sentinel] ✓ served from ${source} — ${snap.size} docs, fromCache=${snap.metadata.fromCache}`, 'color:#0a7');
+      } catch (err) {
+        // A cache read fails if nothing's cached yet (genuinely new
+        // browser, or persistence didn't enable for this tab) — fall
+        // back to the server once rather than surfacing an error.
+        if (source === 'cache') {
+          console.log('%c[sentinel] cache miss/empty, falling back to server', 'color:#c60');
+          snap = await query.get({ source: 'server' });
+          console.log(`%c[sentinel] ✓ served from server — ${snap.size} docs, fromCache=${snap.metadata.fromCache}`, 'color:#0a7');
+        }
+        else throw err;
       }
-    );
+      allSessions = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      connDot.className = 'conn-dot online';
+      connText.textContent = 'Connected';
+      populateWeekButtons();
+      populateUpdatesFilters();
+      renderAll();
+    } catch (err) {
+      console.error('[Firestore] refreshSessions error', err);
+      connDot.className = 'conn-dot error';
+      connText.textContent = 'Connection error';
+      showToast('Could not connect to the database', true);
+    }
   }
-  startSessionsListener(currentSemester);
+
+  let sessionsVersionInitialized = false;
+  let sessionsRefetchTimer = null;
+  function subscribeSessionsVersion() {
+    db.collection(SETTINGS_COL).doc('sessionsVersion').onSnapshot(doc => {
+      const liveVersion = doc.exists ? String(doc.data().updatedAt?.toMillis?.() ?? '') : '';
+      const cachedVersion = localStorage.getItem(SESSIONS_VERSION_KEY);
+      const isFirstFire = !sessionsVersionInitialized;
+      sessionsVersionInitialized = true;
+      // TEMP DEBUG — remove before merging to main.
+      console.log(`%c[sentinel] version fired: live=${liveVersion || '(none)'} cached=${cachedVersion || '(none)'} firstFire=${isFirstFire}`, 'color:#06c');
+
+      if (liveVersion && liveVersion === cachedVersion) {
+        // Sentinel unchanged since our last confirmed sync — local cache
+        // is still valid, read it for free.
+        refreshSessions(currentSemester, 'cache');
+        return;
+      }
+      // First-ever visit for this browser (nothing cached yet), or the
+      // sentinel genuinely moved and the data actually changed — go to
+      // the server. Debounce only real changes, not the initial load,
+      // so several rapid writes collapse into one refetch.
+      clearTimeout(sessionsRefetchTimer);
+      const run = () => refreshSessions(currentSemester, 'server')
+        .then(() => { if (liveVersion) localStorage.setItem(SESSIONS_VERSION_KEY, liveVersion); });
+      if (isFirstFire) run(); else sessionsRefetchTimer = setTimeout(run, 1800);
+    }, err => {
+      console.error('[Sessions version listener error]', err);
+      connDot.className = 'conn-dot error';
+      connText.textContent = 'Connection error';
+    });
+  }
+  subscribeSessionsVersion();
   subscribeRosterNotice();
   // Roster listener is started lazily (see startRosterListener) the first
   // time someone actually opens the roster modal — most visitors never do,
@@ -599,7 +670,7 @@
         if (wantSemester !== currentSemester) {
           currentSemester = wantSemester;
           document.querySelectorAll('#semester-btn-row .pill-btn').forEach(b => b.classList.toggle('active', b.dataset.semester===wantSemester));
-          startSessionsListener(currentSemester);
+          refreshSessions(currentSemester, localStorage.getItem(SESSIONS_VERSION_KEY) ? 'cache' : 'server');
         }
         filters.week = 'all'; filters.weekSemester = currentSemester;
         populateWeekButtons();
@@ -629,7 +700,7 @@
     document.querySelectorAll('#semester-btn-row .pill-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     currentSemester = btn.dataset.semester;
-    startSessionsListener(currentSemester);
+    refreshSessions(currentSemester, localStorage.getItem(SESSIONS_VERSION_KEY) ? 'cache' : 'server');
     filters.week = 'all'; filters.weekSemester = currentSemester;
     populateWeekButtons();
     calDate = weekMondaySem(currentSemester, 1);
@@ -1251,7 +1322,7 @@
     if (sw.semester !== currentSemester) {
       currentSemester = sw.semester;
       document.querySelectorAll('#semester-btn-row .pill-btn').forEach(b => b.classList.toggle('active', b.dataset.semester===sw.semester));
-      startSessionsListener(currentSemester);
+      refreshSessions(currentSemester, localStorage.getItem(SESSIONS_VERSION_KEY) ? 'cache' : 'server');
     }
     return sw;
   }
@@ -1300,7 +1371,7 @@
 
   function resetFilters() {
     filters = { search:'', year:'all', month:'all', week:'all', weekSemester:'fall', course:'all', type:'all' };
-    if (currentSemester !== 'fall') { currentSemester = 'fall'; startSessionsListener(currentSemester); }
+    if (currentSemester !== 'fall') { currentSemester = 'fall'; refreshSessions(currentSemester, localStorage.getItem(SESSIONS_VERSION_KEY) ? 'cache' : 'server'); }
     document.getElementById('search-input').value = '';
     document.getElementById('filter-month').value = 'all';
     document.getElementById('filter-type').value = 'all';
@@ -1750,14 +1821,20 @@
     statusEl.className = 'save-status saving'; statusEl.textContent = 'Saving…';
     try {
       if (existing) {
-        await db.collection(SESSIONS_COL).doc(existing.id).set(data, { merge: true });
+        const batch = db.batch();
+        batch.set(db.collection(SESSIONS_COL).doc(existing.id), data, { merge: true });
+        batch.set(db.collection(SETTINGS_COL).doc('sessionsVersion'), { updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        await batch.commit();
         await db.collection(HISTORY_COL).add({ sessionId: existing.id, ...data, savedAt: firebase.firestore.FieldValue.serverTimestamp() });
         const changes = detectChanges(existing, data);
         await logChangeGroup({ id: existing.id, ...data }, changes);
       } else {
         const ref = db.collection(SESSIONS_COL).doc();
         const createData = { ...data, createdAt: firebase.firestore.FieldValue.serverTimestamp() };
-        await ref.set(createData);
+        const batch = db.batch();
+        batch.set(ref, createData);
+        batch.set(db.collection(SETTINGS_COL).doc('sessionsVersion'), { updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        await batch.commit();
         await db.collection(HISTORY_COL).add({ sessionId: ref.id, ...createData, savedAt: firebase.firestore.FieldValue.serverTimestamp() });
         await logChangeGroup({ id: ref.id, ...data }, [{ fieldLabel: '__CREATED__', oldValue: '', newValue: '' }]);
       }
@@ -1773,7 +1850,13 @@
 
   async function deleteSession(session) {
     if (!confirm('Delete this session? This cannot be undone (history will still record it existed).')) return;
-    try { await db.collection(SESSIONS_COL).doc(session.id).delete(); showToast('Session deleted'); closeForm(); }
+    try {
+      const batch = db.batch();
+      batch.delete(db.collection(SESSIONS_COL).doc(session.id));
+      batch.set(db.collection(SETTINGS_COL).doc('sessionsVersion'), { updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      await batch.commit();
+      showToast('Session deleted'); closeForm();
+    }
     catch (err) { console.error('[Delete error]', err); showToast('Could not delete — try again', true); }
   }
 
@@ -1796,7 +1879,10 @@
           const v = vDoc.data(); if (!v) return;
           if (!confirm('Restore this version? This will overwrite the current session data.')) return;
           const { sessionId: sid, savedAt, ...patch } = v;
-          await db.collection(SESSIONS_COL).doc(sid).set(patch, { merge: true });
+          const batch = db.batch();
+          batch.set(db.collection(SESSIONS_COL).doc(sid), patch, { merge: true });
+          batch.set(db.collection(SETTINGS_COL).doc('sessionsVersion'), { updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+          await batch.commit();
           showToast('Version restored'); closeForm();
         });
       });
@@ -1947,6 +2033,10 @@
       const batch = db.batch();
       chunk.forEach(s => batch.set(db.collection(SESSIONS_COL).doc(s.id), { year: LAB_TARGET_YEAR[String(s.course)], updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true }));
       try { await batch.commit(); updated += chunk.length; } catch (err) { console.error('[Lab year fix error]', err); }
+    }
+    if (deleted + updated > 0) {
+      try { await db.collection(SETTINGS_COL).doc('sessionsVersion').set({ updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true }); }
+      catch (err) { console.error('[Sessions version bump error]', err); }
     }
     showToast(`Removed ${deleted} duplicate rows, corrected ${updated} Year values`);
   }
@@ -2161,6 +2251,10 @@
       chunk.forEach(s => batch.set(db.collection(SESSIONS_COL).doc(s.id), { secondaryInstructor: '', updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true }));
       try { await batch.commit(); cleared += chunk.length; } catch (err) { console.error('[Clear secondary instructor error]', err); }
     }
+    if (cleared > 0) {
+      try { await db.collection(SETTINGS_COL).doc('sessionsVersion').set({ updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true }); }
+      catch (err) { console.error('[Sessions version bump error]', err); }
+    }
     showToast(`Cleared secondary instructor on ${cleared} rows`);
   }
 
@@ -2211,6 +2305,7 @@
     if (!confirm(`Found ${matches.length} rows matching the exact Aug 27/28 topics confirmed in your source screenshots. After deleting, import course200_aug27_28_rebuild.csv via Import CSV. Proceed?`)) return;
     const batch = db.batch();
     matches.forEach(s => batch.delete(db.collection(SESSIONS_COL).doc(s.id)));
+    batch.set(db.collection(SETTINGS_COL).doc('sessionsVersion'), { updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
     try { await batch.commit(); showToast(`Deleted ${matches.length} rows — now import course200_aug27_28_rebuild.csv via Import CSV`); }
     catch (err) { console.error('[200 Aug27/28 delete error]', err); showToast('Failed — check console', true); }
   }
@@ -2225,6 +2320,10 @@
       const batch = db.batch();
       chunk.forEach(s => batch.delete(db.collection(SESSIONS_COL).doc(s.id)));
       try { await batch.commit(); deleted += chunk.length; } catch (err) { console.error('[505 delete error]', err); }
+    }
+    if (deleted > 0) {
+      try { await db.collection(SETTINGS_COL).doc('sessionsVersion').set({ updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true }); }
+      catch (err) { console.error('[Sessions version bump error]', err); }
     }
     showToast(`Deleted ${deleted} rows — now import course505_rebuild.csv via Import CSV`);
   }
@@ -2518,6 +2617,11 @@
         });
         try { await batch.commit(); updated += chunk.length; }
         catch (err) { console.error('[Batch import update error]', err); failed += chunk.length; }
+      }
+
+      if (created + updated > 0) {
+        try { await db.collection(SETTINGS_COL).doc('sessionsVersion').set({ updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true }); }
+        catch (err) { console.error('[Sessions version bump error]', err); }
       }
 
       if (failed === 0) {
