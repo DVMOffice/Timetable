@@ -59,7 +59,7 @@
   let calDate     = new Date();
   let allSessions = [];
   let currentSemester = 'fall'; // 'fall' | 'winter' — drives which set of Week buttons is shown
-  let filters = { search: '', year: 'all', month: 'all', week: 'all', weekSemester: 'fall', course: 'all', type: 'all' };
+  let filters = { search: '', year: 'all', month: 'all', week: 'all', weekSemester: 'fall', course: [], type: 'all' };
   let colorsOn = JSON.parse(localStorage.getItem('timetable_colors') ?? 'true');
 
   // ════════════════════════════════════════════════════════════
@@ -494,7 +494,7 @@
       const sw = calcSemesterWeek(s.date);
       return sw.semester === filters.weekSemester && String(sw.week) === String(filters.week);
     });
-    if (filters.course !== 'all') data = data.filter(s => String(s.course) === String(filters.course));
+    if (filters.course.length) data = data.filter(s => filters.course.includes(String(s.course)));
     if (filters.type   !== 'all') data = data.filter(s => s.type === filters.type);
     if (filters.month  !== 'all') data = data.filter(s => s.date && s.date.slice(0,7) === filters.month);
     if (filters.search) {
@@ -554,25 +554,64 @@
     if (year !== 'all') list = list.filter(c => c.years.has(String(year)));
     list.sort((a,b) => a.code.localeCompare(b.code, undefined, {numeric:true}));
 
+    // Reconcile stale selections when the valid course set shrinks (e.g. Year changed)
+    // rather than wiping the whole selection.
+    const validCodes = new Set(list.map(c => c.code));
+    filters.course = filters.course.filter(code => validCodes.has(code));
+
     const listEl = document.getElementById('course-filter-list');
-    listEl.innerHTML = `<div class="fbar-dropdown-item ${filters.course==='all'?'active':''}" data-code="all">All Courses</div>` +
-      list.map(c => `<div class="fbar-dropdown-item ${filters.course===c.code?'active':''}" data-code="${c.code}">${escapeHtml(c.code)} – ${escapeHtml(c.name)}</div>`).join('');
+    const allActive = filters.course.length === 0;
+    listEl.innerHTML =
+      `<div class="fbar-dropdown-item all-item ${allActive?'active':''}" data-code="all">` +
+        `<span class="fbar-cb">${allActive?'✓':''}</span>All Courses</div>` +
+      list.map(c => {
+        const active = filters.course.includes(c.code);
+        return `<div class="fbar-dropdown-item ${active?'active':''}" data-code="${c.code}">` +
+               `<span class="fbar-cb">${active?'✓':''}</span>${escapeHtml(c.code)} – ${escapeHtml(c.name)}</div>`;
+      }).join('') +
+      `<div class="fbar-dropdown-footer">` +
+        `<button type="button" class="fbar-clear-btn">Clear</button>` +
+        `<button type="button" class="fbar-done-btn">Done</button>` +
+      `</div>`;
+
     listEl.querySelectorAll('.fbar-dropdown-item').forEach(item => {
-      item.addEventListener('click', () => {
-        filters.course = item.dataset.code;
+      item.addEventListener('click', e => {
+        e.stopPropagation();
+        const code = item.dataset.code;
+        if (code === 'all') {
+          filters.course = [];
+        } else {
+          const i = filters.course.indexOf(code);
+          if (i === -1) filters.course.push(code); else filters.course.splice(i, 1);
+        }
         updateCourseButtonLabel();
-        listEl.classList.add('hidden');
-        renderAll();
+        renderAll(); // renderAll() re-invokes populateCourseDropdown(filters.year); the 'hidden' class is untouched so the list stays open
       });
     });
-    if (!list.some(c => c.code === filters.course)) filters.course = 'all';
+    listEl.querySelector('.fbar-clear-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      filters.course = [];
+      updateCourseButtonLabel();
+      renderAll();
+    });
+    listEl.querySelector('.fbar-done-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      listEl.classList.add('hidden');
+    });
+
     updateCourseButtonLabel();
   }
   function updateCourseButtonLabel() {
-    const btn = document.getElementById('course-filter-btn');
-    if (filters.course === 'all') { btn.textContent = 'All Courses ▾'; return; }
-    const c = CourseData.findCourse(filters.course);
-    btn.textContent = (c ? `${c.code} – ${c.name}` : filters.course) + ' ▾';
+    const btn = document.getElementById('course-filter-btn-text');
+    const sel = filters.course;
+    if (sel.length === 0) { btn.textContent = 'All Courses'; return; }
+    if (sel.length === 1) {
+      const c = CourseData.findCourse(sel[0]);
+      btn.textContent = c ? `${c.code} – ${c.name}` : sel[0];
+      return;
+    }
+    if (sel.length <= 3) { btn.textContent = sel.join(', '); return; }
+    btn.textContent = sel.length + ' Courses selected';
   }
   document.getElementById('course-filter-btn').addEventListener('click', e => {
     e.stopPropagation();
@@ -619,8 +658,7 @@
     document.querySelectorAll('#year-btn-row .pill-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     filters.year = btn.dataset.year;
-    filters.course = 'all';
-    populateCourseDropdown(filters.year);
+    populateCourseDropdown(filters.year); // reconciles filters.course in place
     renderAll();
   });
 
@@ -1299,7 +1337,7 @@
   document.getElementById('filter-type').addEventListener('change', e => { filters.type = e.target.value; renderAll(); });
 
   function resetFilters() {
-    filters = { search:'', year:'all', month:'all', week:'all', weekSemester:'fall', course:'all', type:'all' };
+    filters = { search:'', year:'all', month:'all', week:'all', weekSemester:'fall', course:[], type:'all' };
     if (currentSemester !== 'fall') { currentSemester = 'fall'; startSessionsListener(currentSemester); }
     document.getElementById('search-input').value = '';
     document.getElementById('filter-month').value = 'all';
@@ -1318,7 +1356,10 @@
     if (filters.year   !== 'all') active.push({k:'year',  l:`Year ${filters.year}`});
     if (filters.week   !== 'all') active.push({k:'week',  l:`${filters.weekSemester==='winter'?'Winter':'Fall'} Week ${filters.week}`});
     if (filters.month  !== 'all') { const m = MONTH_SEQUENCE.find(x=>x.value===filters.month); active.push({k:'month', l:`Month: ${m?m.label:filters.month}`}); }
-    if (filters.course !== 'all') { const c = CourseData.findCourse(filters.course); active.push({k:'course', l:`Course: ${filters.course}${c?' – '+c.name.slice(0,24):''}`}); }
+    filters.course.forEach(code => {
+      const c = CourseData.findCourse(code);
+      active.push({k:`course:${code}`, l:`Course: ${code}${c?' – '+c.name.slice(0,24):''}`});
+    });
     if (filters.type   !== 'all') active.push({k:'type',  l:`Type: ${filters.type}`});
     if (filters.search)           active.push({k:'search',l:`"${filters.search}"`});
 
@@ -1334,8 +1375,8 @@
         if (k === 'search') { filters.search=''; document.getElementById('search-input').value=''; }
         else if (k === 'month') { filters.month='all'; document.getElementById('filter-month').value='all'; }
         else if (k === 'type') { filters.type='all'; document.getElementById('filter-type').value='all'; }
-        else if (k === 'course') { filters.course='all'; populateCourseDropdown(filters.year); }
-        else if (k === 'year') { filters.year='all'; filters.course='all'; document.querySelectorAll('#year-btn-row .pill-btn').forEach(b=>b.classList.toggle('active',b.dataset.year==='all')); populateCourseDropdown('all'); }
+        else if (k.indexOf('course:') === 0) { const code = k.slice('course:'.length); filters.course = filters.course.filter(c => c !== code); }
+        else if (k === 'year') { filters.year='all'; filters.course=[]; document.querySelectorAll('#year-btn-row .pill-btn').forEach(b=>b.classList.toggle('active',b.dataset.year==='all')); populateCourseDropdown('all'); }
         else if (k === 'week') { filters.week='all'; document.querySelectorAll('#week-btn-row-1 .pill-btn, #week-btn-row-2 .pill-btn').forEach(b=>b.classList.toggle('active',b.dataset.week==='all')); }
         renderAll();
       });

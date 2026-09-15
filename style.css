@@ -140,9 +140,12 @@ html.dark .catalog-group-legacy .catalog-table tbody tr:not(.catalog-total-row) 
 
 /* Custom Course dropdown (supports wrapped option text) */
 .fbar-dropdown-btn {
-  border: none; background: transparent; font-size: 12px; color: var(--text); text-align: left;
-  padding: 0; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: flex; align-items: center; gap: 3px; width: 100%;
+  border: none; background: transparent; font-size: 13px; color: var(--text); text-align: left;
+  padding: 0; cursor: pointer;
 }
+.fbar-dropdown-btn-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+.fbar-dropdown-btn .fbar-arrow { font-size: 14px; color: var(--text-2); pointer-events: none; flex-shrink: 0; }
 .fbar-dropdown-list {
   position: absolute; top: calc(100% + 4px); left: 0; z-index: 80; width: 240px;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
@@ -153,9 +156,27 @@ html.dark .catalog-group-legacy .catalog-table tbody tr:not(.catalog-total-row) 
 .fbar-dropdown-item {
   padding: 7px 9px; font-size: 12px; color: var(--text-2); border-radius: 5px; cursor: pointer;
   white-space: normal; line-height: 1.35; transition: background var(--transition);
+  display: flex; align-items: center; gap: 8px;
 }
 .fbar-dropdown-item:hover { background: var(--accent-light); color: var(--accent); }
 .fbar-dropdown-item.active { background: var(--accent); color: #fff; }
+.fbar-dropdown-item .fbar-cb {
+  flex-shrink: 0; width: 14px; height: 14px; border: 1.5px solid var(--border);
+  border-radius: 3px; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 10px; line-height: 1; color: transparent; background: var(--surface);
+}
+.fbar-dropdown-item.active .fbar-cb { background: var(--accent); border-color: var(--accent); color: #fff; }
+.fbar-dropdown-item.all-item { border-bottom: 1px solid var(--border); margin-bottom: 4px; padding-bottom: 9px; font-weight: 600; }
+.fbar-dropdown-footer {
+  display: flex; justify-content: flex-end; gap: 6px; padding: 6px 4px 2px; margin-top: 4px;
+  border-top: 1px solid var(--border);
+}
+.fbar-dropdown-footer button {
+  font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 5px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-2);
+}
+.fbar-dropdown-footer button:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-light); }
+.fbar-dropdown-footer .fbar-done-btn { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 .active-chips-row { display: flex; align-items: center; gap: 8px; padding: 4px 0 4px; flex-wrap: wrap; }
 .active-chips-row.hidden { display: none; }
