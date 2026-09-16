@@ -645,6 +645,11 @@
     if (year !== 'all') list = list.filter(c => c.years.has(String(year)));
     list.sort((a,b) => a.code.localeCompare(b.code, undefined, {numeric:true}));
 
+    // Reconcile stale selections when the valid course set shrinks (e.g. Year changed)
+    // rather than wiping the whole selection.
+    const validCodes = new Set(list.map(c => c.code));
+    filters.course = filters.course.filter(code => validCodes.has(code));
+
     const listEl = document.getElementById('course-filter-list');
     listEl.innerHTML = `<div class="fbar-dropdown-item ${filters.course.length===0?'active':''}" data-code="all"><input type="checkbox" ${filters.course.length===0?'checked':''} tabindex="-1"> All Courses</div>` +
       list.map(c => `<div class="fbar-dropdown-item ${filters.course.includes(c.code)?'active':''}" data-code="${c.code}"><input type="checkbox" ${filters.course.includes(c.code)?'checked':''} tabindex="-1"> ${escapeHtml(c.code)} – ${escapeHtml(c.name)}</div>`).join('');
@@ -667,14 +672,14 @@
     updateCourseButtonLabel();
   }
   function updateCourseButtonLabel() {
-    const btn = document.getElementById('course-filter-btn');
-    if (filters.course.length === 0) { btn.textContent = 'All Courses ▾'; return; }
+    const btn = document.getElementById('course-filter-btn-text') || document.getElementById('course-filter-btn');
+    if (filters.course.length === 0) { btn.textContent = 'All Courses'; return; }
     if (filters.course.length === 1) {
       const c = CourseData.findCourse(filters.course[0]);
-      btn.textContent = (c ? `${c.code} – ${c.name}` : filters.course[0]) + ' ▾';
+      btn.textContent = c ? `${c.code} – ${c.name}` : filters.course[0];
       return;
     }
-    btn.textContent = `${filters.course.length} Courses ▾`;
+    btn.textContent = `${filters.course.length} Courses`;
   }
   document.getElementById('course-filter-btn').addEventListener('click', e => {
     e.stopPropagation();
