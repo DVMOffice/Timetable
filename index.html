@@ -8,47 +8,62 @@
 </head>
 <body>
 
+  <!-- ═══════════════ TOP NAVBAR ═══════════════ -->
+  <nav class="app-navbar" id="app-navbar">
+    <div class="navbar-brand">
+      <img class="navbar-logo" src="assets/ucalgary-logo.png" alt="University of Calgary" />
+    </div>
+    <div class="navbar-actions">
+      <button class="admin-login-btn" id="admin-toggle">Administrator Login</button>
+    </div>
+  </nav>
+
   <!-- ═══════════════ FREEZE / FILTER PANEL ═══════════════ -->
   <div class="filter-bar-wrap" id="filter-bar-wrap">
-    <button class="filter-toggle-btn" id="filter-toggle-btn">Filters ▾</button>
+    <!-- <button class="filter-toggle-btn" id="filter-toggle-btn">Filters ▾</button> -->
     <div class="filter-bar-inner" id="filter-bar-inner">
 
-      <div class="brand-block">
-        <span class="brand-line brand-line-1">2026-2027</span>
-        <span class="brand-line brand-line-2">UCVM</span>
-        <span class="brand-line brand-line-3">Timetable</span>
-        <button class="course-list-btn" id="course-list-btn">📋 Course List</button>
+      <div class="brand-card">
+        <span class="brand-card-year">2026-2027</span>
+        <span class="brand-card-ucvm">UCVM</span>
+        <span class="brand-card-sub">Timetable</span>
+        <button class="course-list-btn" id="course-list-btn">Course List</button>
       </div>
 
       <div class="filter-stack">
 
-        <!-- Year row -->
-        <div class="filter-block-row">
-          <span class="filter-block-label">Year</span>
-          <div class="btn-row btn-row-left" id="year-btn-row">
-            <button class="pill-btn" data-year="1">Year 1</button>
-            <button class="pill-btn" data-year="2">Year 2</button>
-            <button class="pill-btn" data-year="3">Year 3</button>
-            <button class="pill-btn active" data-year="all">All Years</button>
-          </div>
-        </div>
+        <!-- Year / Semester / Week — left edges aligned to each other, group centered as a whole -->
+        <div class="filter-block-group">
 
-        <!-- Semester row -->
-        <div class="filter-block-row">
-          <span class="filter-block-label">Semester</span>
-          <div class="btn-row btn-row-left" id="semester-btn-row">
-            <button class="pill-btn active" data-semester="fall">Fall</button>
-            <button class="pill-btn" data-semester="winter">Winter</button>
+          <!-- Year row -->
+          <div class="filter-block-row">
+            <span class="filter-block-label">Year</span>
+            <div class="btn-row btn-row-left" id="year-btn-row">
+              <button class="pill-btn" data-year="1">Year 1</button>
+              <button class="pill-btn" data-year="2">Year 2</button>
+              <button class="pill-btn" data-year="3">Year 3</button>
+              <button class="pill-btn active" data-year="all">All Years</button>
+            </div>
           </div>
-        </div>
 
-        <!-- Week rows (populated dynamically in app.js — split across two lines, no scroll) -->
-        <div class="filter-block-row filter-block-row-top" id="week-pill-block">
-          <span class="filter-block-label">Week</span>
-          <div class="week-btn-lines">
-            <div class="btn-row btn-row-left" id="week-btn-row-1"></div>
-            <div class="btn-row btn-row-left" id="week-btn-row-2"></div>
+          <!-- Semester row -->
+          <div class="filter-block-row">
+            <span class="filter-block-label">Semester</span>
+            <div class="btn-row btn-row-left" id="semester-btn-row">
+              <button class="pill-btn active" data-semester="fall">Fall</button>
+              <button class="pill-btn" data-semester="winter">Winter</button>
+            </div>
           </div>
+
+          <!-- Week rows (populated dynamically in app.js — split across two lines, no scroll) -->
+          <div class="filter-block-row filter-block-row-top" id="week-pill-block">
+            <span class="filter-block-label">Week</span>
+            <div class="week-btn-lines">
+              <div class="btn-row btn-row-left" id="week-btn-row-1"></div>
+              <div class="btn-row btn-row-left" id="week-btn-row-2"></div>
+            </div>
+          </div>
+
         </div>
         <!-- Mobile-only Week dropdown (shown instead of the pill rows above on small screens) -->
         <div class="fbar-item mobile-only" id="week-dropdown-item">
@@ -98,7 +113,7 @@
             </div>
           </div>
 
-          <button class="fbar-reset" id="reset-filters">↺ Reset</button>
+          <button class="fbar-reset" id="reset-filters"> Reset</button>
         </div>
 
         <div class="active-chips-row hidden" id="active-chips-row">
@@ -150,7 +165,10 @@
       <div class="side-column">
         <div class="side-panel updates-panel" id="updates-panel">
           <div class="side-panel-header">
-            <span class="side-panel-title">📋 Latest Updates</span>
+            <div class="side-panel-title-row">
+              <span class="side-panel-title">📋 Latest Updates</span>
+              <button class="export-updates-btn" id="export-updates-btn">Export Updates</button>
+            </div>
             <span class="side-panel-sub">Most recent changes across all sessions</span>
             <div class="updates-filters">
               <select class="updates-filter-select" id="updates-filter-year">
@@ -194,7 +212,6 @@
     <div class="bottom-bar-spacer"></div>
     <div class="bottom-bar-center">
       <span class="conn-status"><span class="conn-dot" id="conn-dot"></span><span id="conn-text">Connecting…</span></span>
-      <button class="admin-login-btn" id="admin-toggle">Administrator Login</button>
     </div>
     <div class="bottom-bar-right">
       <button class="btn-icon" id="dark-toggle" title="Toggle dark mode">🌙</button>

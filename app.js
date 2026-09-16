@@ -69,7 +69,7 @@
   let calDate     = new Date();
   let allSessions = [];
   let currentSemester = 'fall'; // 'fall' | 'winter' — drives which set of Week buttons is shown
-  let filters = { search: '', year: 'all', month: 'all', week: 'all', weekSemester: 'fall', course: 'all', type: 'all' };
+  let filters = { search: '', year: 'all', month: 'all', week: 'all', weekSemester: 'fall', course: [], type: 'all' };
   let colorsOn = JSON.parse(localStorage.getItem('timetable_colors') ?? 'true');
 
   
@@ -254,6 +254,26 @@
       });
     });
   }
+
+  // ── Export the full Latest Updates feed (all loaded change_log entries,
+  //    not just the 25 shown on screen and ignoring the panel's own filters —
+  //    "export ALL updates") ──
+  const UPDATES_EXPORT_HEADERS = ['Date Changed', 'Time Changed', 'Session Year', 'Session Date', 'Session Time', 'Course', 'What Changed'];
+  function updateToRow(u) {
+    const when = u.changedAt?.toDate ? u.changedAt.toDate() : null;
+    const whenDate = when ? when.toLocaleDateString('en-CA') : '';
+    const whenTime = when ? when.toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit' }) : '';
+    return [whenDate, whenTime, u.sessionYear || '', u.sessionDate || '', fmtTime12(u.sessionStartTime), u.course || '', describeChangedFields(u.changedFields)];
+  }
+  function exportUpdatesCSV() {
+    if (!latestChanges.length) { showToast('No updates to export', true); return; }
+    const rows = latestChanges.map(updateToRow);
+    const csv = [UPDATES_EXPORT_HEADERS, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    downloadBlob(csv, `ucvm_updates_${dateKey(new Date())}.csv`, 'text/csv');
+    showToast('Updates exported');
+  }
+  document.getElementById('export-updates-btn').addEventListener('click', exportUpdatesCSV);
+
   ['updates-filter-year','updates-filter-course','updates-filter-week'].forEach(id =>
     document.getElementById(id).addEventListener('change', renderLatestUpdates));
 
@@ -565,7 +585,7 @@
       const sw = calcSemesterWeek(s.date);
       return sw.semester === filters.weekSemester && String(sw.week) === String(filters.week);
     });
-    if (filters.course !== 'all') data = data.filter(s => String(s.course) === String(filters.course));
+    if (filters.course.length) data = data.filter(s => filters.course.includes(String(s.course)));
     if (filters.type   !== 'all') data = data.filter(s => s.type === filters.type);
     if (filters.month  !== 'all') data = data.filter(s => s.date && s.date.slice(0,7) === filters.month);
     if (filters.search) {
@@ -626,24 +646,35 @@
     list.sort((a,b) => a.code.localeCompare(b.code, undefined, {numeric:true}));
 
     const listEl = document.getElementById('course-filter-list');
-    listEl.innerHTML = `<div class="fbar-dropdown-item ${filters.course==='all'?'active':''}" data-code="all">All Courses</div>` +
-      list.map(c => `<div class="fbar-dropdown-item ${filters.course===c.code?'active':''}" data-code="${c.code}">${escapeHtml(c.code)} – ${escapeHtml(c.name)}</div>`).join('');
+    listEl.innerHTML = `<div class="fbar-dropdown-item ${filters.course.length===0?'active':''}" data-code="all"><input type="checkbox" ${filters.course.length===0?'checked':''} tabindex="-1"> All Courses</div>` +
+      list.map(c => `<div class="fbar-dropdown-item ${filters.course.includes(c.code)?'active':''}" data-code="${c.code}"><input type="checkbox" ${filters.course.includes(c.code)?'checked':''} tabindex="-1"> ${escapeHtml(c.code)} – ${escapeHtml(c.name)}</div>`).join('');
     listEl.querySelectorAll('.fbar-dropdown-item').forEach(item => {
-      item.addEventListener('click', () => {
-        filters.course = item.dataset.code;
-        updateCourseButtonLabel();
-        listEl.classList.add('hidden');
+      item.addEventListener('click', e => {
+        e.stopPropagation();
+        const code = item.dataset.code;
+        if (code === 'all') {
+          filters.course = [];
+        } else if (filters.course.includes(code)) {
+          filters.course = filters.course.filter(c => c !== code);
+        } else {
+          filters.course = [...filters.course, code];
+        }
+        populateCourseDropdown(filters.year);
         renderAll();
       });
     });
-    if (!list.some(c => c.code === filters.course)) filters.course = 'all';
+    filters.course = filters.course.filter(code => list.some(c => c.code === code));
     updateCourseButtonLabel();
   }
   function updateCourseButtonLabel() {
     const btn = document.getElementById('course-filter-btn');
-    if (filters.course === 'all') { btn.textContent = 'All Courses ▾'; return; }
-    const c = CourseData.findCourse(filters.course);
-    btn.textContent = (c ? `${c.code} – ${c.name}` : filters.course) + ' ▾';
+    if (filters.course.length === 0) { btn.textContent = 'All Courses ▾'; return; }
+    if (filters.course.length === 1) {
+      const c = CourseData.findCourse(filters.course[0]);
+      btn.textContent = (c ? `${c.code} – ${c.name}` : filters.course[0]) + ' ▾';
+      return;
+    }
+    btn.textContent = `${filters.course.length} Courses ▾`;
   }
   document.getElementById('course-filter-btn').addEventListener('click', e => {
     e.stopPropagation();
@@ -690,7 +721,7 @@
     document.querySelectorAll('#year-btn-row .pill-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     filters.year = btn.dataset.year;
-    filters.course = 'all';
+    filters.course = [];
     populateCourseDropdown(filters.year);
     renderAll();
   });
@@ -1370,7 +1401,7 @@
   document.getElementById('filter-type').addEventListener('change', e => { filters.type = e.target.value; renderAll(); });
 
   function resetFilters() {
-    filters = { search:'', year:'all', month:'all', week:'all', weekSemester:'fall', course:'all', type:'all' };
+    filters = { search:'', year:'all', month:'all', week:'all', weekSemester:'fall', course:[], type:'all' };
     if (currentSemester !== 'fall') { currentSemester = 'fall'; refreshSessions(currentSemester, localStorage.getItem(SESSIONS_VERSION_KEY) ? 'cache' : 'server'); }
     document.getElementById('search-input').value = '';
     document.getElementById('filter-month').value = 'all';
@@ -1389,7 +1420,12 @@
     if (filters.year   !== 'all') active.push({k:'year',  l:`Year ${filters.year}`});
     if (filters.week   !== 'all') active.push({k:'week',  l:`${filters.weekSemester==='winter'?'Winter':'Fall'} Week ${filters.week}`});
     if (filters.month  !== 'all') { const m = MONTH_SEQUENCE.find(x=>x.value===filters.month); active.push({k:'month', l:`Month: ${m?m.label:filters.month}`}); }
-    if (filters.course !== 'all') { const c = CourseData.findCourse(filters.course); active.push({k:'course', l:`Course: ${filters.course}${c?' – '+c.name.slice(0,24):''}`}); }
+    if (filters.course.length) {
+      const label = filters.course.length === 1
+        ? (() => { const c = CourseData.findCourse(filters.course[0]); return `Course: ${filters.course[0]}${c?' – '+c.name.slice(0,24):''}`; })()
+        : `Courses: ${filters.course.join(', ')}`;
+      active.push({k:'course', l:label});
+    }
     if (filters.type   !== 'all') active.push({k:'type',  l:`Type: ${filters.type}`});
     if (filters.search)           active.push({k:'search',l:`"${filters.search}"`});
 
@@ -1405,8 +1441,8 @@
         if (k === 'search') { filters.search=''; document.getElementById('search-input').value=''; }
         else if (k === 'month') { filters.month='all'; document.getElementById('filter-month').value='all'; }
         else if (k === 'type') { filters.type='all'; document.getElementById('filter-type').value='all'; }
-        else if (k === 'course') { filters.course='all'; populateCourseDropdown(filters.year); }
-        else if (k === 'year') { filters.year='all'; filters.course='all'; document.querySelectorAll('#year-btn-row .pill-btn').forEach(b=>b.classList.toggle('active',b.dataset.year==='all')); populateCourseDropdown('all'); }
+        else if (k === 'course') { filters.course=[]; populateCourseDropdown(filters.year); }
+        else if (k === 'year') { filters.year='all'; filters.course=[]; document.querySelectorAll('#year-btn-row .pill-btn').forEach(b=>b.classList.toggle('active',b.dataset.year==='all')); populateCourseDropdown('all'); }
         else if (k === 'week') { filters.week='all'; document.querySelectorAll('#week-btn-row-1 .pill-btn, #week-btn-row-2 .pill-btn').forEach(b=>b.classList.toggle('active',b.dataset.week==='all')); }
         renderAll();
       });

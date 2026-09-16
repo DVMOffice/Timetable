@@ -14,10 +14,10 @@
   --text:         #111827;
   --text-2:       #374151;
   --text-3:       #6B7280;
-  --accent:       #1A3A6B;
-  --accent-2:     #14305A;
-  --accent-light: #EAF0FB;
-  --accent-mid:   #4A6FA5;
+  --accent:       #B91C1C;
+  --accent-2:     #8F1515;
+  --accent-light: #FBEAEA;
+  --accent-mid:   #C74747;
   --danger:       #B91C1C;
   --success:      #166534;
   --shadow:       0 1px 3px rgba(0,0,0,.07), 0 2px 8px rgba(0,0,0,.04);
@@ -34,7 +34,7 @@ html.dark {
   --bg: #0A1120; --surface: #111E30; --surface-2: #172438;
   --surface-3: #1E2D44; --border: #253550; --border-2: #2E4268;
   --text: #E8EFF8; --text-2: #96AECB; --text-3: #4E6685;
-  --accent-light: #162040;
+  --accent-light: #2E1616;
   --shadow: 0 1px 3px rgba(0,0,0,.4), 0 2px 8px rgba(0,0,0,.3);
 }
 
@@ -49,22 +49,37 @@ select, input, textarea { font-family: inherit; color: inherit; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 2px; }
 
-/* ── Freeze / filter panel ────────────────────────────────────── */
-.filter-bar-wrap { background: var(--surface-2); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 50; box-shadow: var(--shadow); }
-.filter-bar-inner { display: flex; align-items: flex-start; gap: 22px; padding: 10px 20px 8px; width: 100%; }
+/* ── Top navbar (brand + global nav actions) ─────────────────── */
+:root { --navbar-h: 50px; }
+.app-navbar {
+  height: var(--navbar-h); display: flex; align-items: center; justify-content: space-between;
+  gap: 14px; padding: 0 20px; background: var(--surface); border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 70; box-shadow: var(--shadow);
+}
+.navbar-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.navbar-logo { height: 38px; width: auto; flex-shrink: 0; filter: brightness(1.15) saturate(1.1); }
+.navbar-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 
-.brand-block { display: flex; flex-direction: column; flex-shrink: 0; padding-top: 2px; min-width: 110px; }
-.brand-line { font-family: var(--font-body); line-height: 1.15; color: var(--accent); }
-.brand-line-1 { font-size: 14.5px; font-weight: 600; color: var(--text-3); }
-.brand-line-2 { font-size: 23px; font-weight: 800; }
-.brand-line-3 { font-size: 16px; font-weight: 700; color: var(--text-2); }
+/* ── Freeze / filter panel (scrolls away with the page; only the navbar stays pinned) ── */
+.filter-bar-wrap { background: var(--surface-2); border-bottom: 1px solid var(--border); box-shadow: var(--shadow); }
+.filter-bar-inner { display: flex; align-items: flex-start; gap: 8px; padding: 10px 20px 8px; width: 100%; }
+
+/* ── Brand card (sits left of the Year/Semester/Week block) ─── */
+.brand-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px; flex-shrink: 0;
+  padding: 10px 14px 12px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); min-width: 150px;
+}
+.brand-card-year { font-size: 12px; font-weight: 600; color: var(--text-3); }
+.brand-card-ucvm { font-family: var(--font-head); font-size: 26px; font-weight: 800; color: var(--accent); line-height: 1.1; }
+.brand-card-sub { font-size: 13.5px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
 
 .course-list-btn {
-  margin-top: 8px; padding: 6px 10px; font-size: 11.5px; font-weight: 600;
-  color: var(--accent); background: var(--accent-light); border: 1px solid var(--accent);
+  width: 100%; padding: 7px 10px; font-size: 12px; font-weight: 700;
+  color: #fff; background: var(--accent); border: none;
   border-radius: var(--radius); cursor: pointer; transition: all var(--transition); text-align: center;
 }
-.course-list-btn:hover { background: var(--accent); color: #fff; }
+.course-list-btn:hover { background: var(--accent-2); }
 
 /* ── Course List modal table ── */
 .catalog-modal .modal-box { width: min(760px, 96vw); }
@@ -101,21 +116,24 @@ html.dark .catalog-group-legacy .catalog-table tbody tr:not(.catalog-total-row) 
 
 .filter-stack { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
 
-.filter-block-row { display: flex; align-items: center; gap: 10px; }
-.filter-block-label { font-size: 10.5px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: .5px; flex-shrink: 0; }
+/* Year / Semester / Week: rows keep a shared left edge (their labels line up),
+   sitting right after the brand card instead of centered in the remaining space. */
+.filter-block-group { display: flex; flex-direction: column; gap: 6px; align-self: flex-start; }
+.filter-block-row { display: flex; align-items: center; gap: 10px; margin-left: 16px; }
+.filter-block-label { font-size: 10.5px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: .5px; flex-shrink: 0; width: 64px; }
 
 .btn-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .btn-row-left { justify-content: flex-start; }
 .btn-row-scroll { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; -webkit-overflow-scrolling: touch; }
 .pill-btn {
   padding: 5px 12px; font-size: 11.5px; font-weight: 600; color: var(--text-2);
-  background: var(--surface); border: 1px solid var(--border); border-radius: 999px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
   white-space: nowrap; transition: all var(--transition); flex-shrink: 0;
 }
 .pill-btn:hover { border-color: var(--accent-mid); color: var(--accent); }
 .pill-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 
-.filter-row { display: flex; align-items: flex-start; gap: 6px; padding: 4px 0 2px; flex-wrap: wrap; }
+.filter-row { display: flex; align-items: flex-start; justify-content: flex-start; margin-left: 90px; gap: 6px; padding: 4px 0 2px; flex-wrap: wrap; }
 .fbar-item {
   display: flex; flex-direction: column; gap: 2px;
   background: var(--surface); border: 1px solid var(--border);
@@ -154,6 +172,7 @@ html.dark .catalog-group-legacy .catalog-table tbody tr:not(.catalog-total-row) 
   padding: 7px 9px; font-size: 12px; color: var(--text-2); border-radius: 5px; cursor: pointer;
   white-space: normal; line-height: 1.35; transition: background var(--transition);
 }
+.fbar-dropdown-item input[type="checkbox"] { margin-right: 5px; pointer-events: none; vertical-align: -1px; }
 .fbar-dropdown-item:hover { background: var(--accent-light); color: var(--accent); }
 .fbar-dropdown-item.active { background: var(--accent); color: #fff; }
 
@@ -221,6 +240,14 @@ html.dark .catalog-group-legacy .catalog-table tbody tr:not(.catalog-total-row) 
 .export-panel  { flex: 1 1 0; }
 .side-panel-header { padding: 10px 14px 8px; border-bottom: 1px solid var(--border); background: var(--surface-2); flex-shrink: 0; }
 .side-panel-title { font-family: var(--font-head); font-size: 12.5px; font-weight: 700; color: var(--text); display: block; margin-bottom: 3px; }
+.side-panel-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.side-panel-title-row .side-panel-title { margin-bottom: 0; }
+.export-updates-btn {
+  padding: 3px 8px; font-size: 10px; font-weight: 600; color: var(--accent);
+  background: var(--accent-light); border: 1px solid var(--accent); border-radius: 4px;
+  cursor: pointer; transition: all var(--transition); white-space: nowrap; flex-shrink: 0;
+}
+.export-updates-btn:hover { background: var(--accent); color: #fff; }
 .side-panel-sub { font-size: 10.5px; color: var(--text-3); display: block; margin-bottom: 6px; }
 .updates-filters { display: flex; gap: 4px; flex-wrap: wrap; }
 .updates-filter-select { font-size: 10px; padding: 3px 5px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text-2); flex: 1; min-width: 62px; }
@@ -479,7 +506,7 @@ tr.lab-matrix-editable:hover td { background: var(--accent-light); }
 
 /* ── Print styles for PDF export ─────────────────────────────── */
 @media print {
-  .filter-bar-wrap, .side-column, .bottom-bar, .modal-container,
+  .app-navbar, .filter-bar-wrap, .side-column, .bottom-bar, .modal-container,
   .cal-toolbar .btn-cal-today, .cal-toolbar .cal-view-toggle, .cal-toolbar #color-toggle { display: none !important; }
   .main-view { grid-template-columns: 1fr !important; }
   body { background: #fff; padding-bottom: 0; }
@@ -493,6 +520,7 @@ tr.lab-matrix-editable:hover td { background: var(--accent-light); }
 /* ── Responsive ────────────────────────────────────────────── */
 @media (max-width: 900px) {
   .filter-bar-inner { flex-direction: column; gap: 8px; }
+  .brand-card { align-self: flex-start; }
   .fbar-course { max-width: none; }
   .tg-wrap, .tg-body { grid-template-columns: 46px repeat(5, 1fr); }
 }
@@ -530,6 +558,16 @@ tr.lab-matrix-editable:hover td { background: var(--accent-light); }
   .modal-box { width: 96vw !important; }
   .tg-body { height: 56vh; min-height: 320px; }
   .cal-toolbar { flex-wrap: wrap; }
+
+  /* Navbar shrinks so brand + actions still fit on one line */
+  .app-navbar { padding: 0 10px; gap: 8px; }
+  .navbar-actions { gap: 6px; }
+  .navbar-logo { height: 30px; }
+
+  /* Brand card shrinks alongside it */
+  .brand-card { padding: 8px 10px 10px; min-width: 120px; }
+  .brand-card-ucvm { font-size: 21px; }
+  .course-list-btn { padding: 5px 8px; font-size: 11px; }
 
   /* Bottom bar shrinks to reclaim vertical space */
   .bottom-bar { height: 34px; padding: 0 10px; }
