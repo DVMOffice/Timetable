@@ -2745,18 +2745,26 @@
   // ════════════════════════════════════════════════════════════
   // FILTER PANEL COLLAPSE (all screen sizes — desktop can minimize too)
   // ════════════════════════════════════════════════════════════
-  function syncFilterToggleLabel() {
-    const inner = document.getElementById('filter-bar-inner');
-    const btn = document.getElementById('filter-toggle-btn');
-    const isOpen = getComputedStyle(inner).display !== 'none';
-    btn.textContent = isOpen ? 'Filters ▴' : 'Filters ▾';
-  }
-  document.getElementById('filter-toggle-btn').addEventListener('click', () => {
-    document.getElementById('filter-bar-wrap').classList.toggle('toggled');
+  // Guarded: the button is currently commented out of index.html, and an
+  // unguarded getElementById('filter-toggle-btn').addEventListener(...) here
+  // threw on load (null has no addEventListener) — which silently aborted
+  // every top-level init statement AFTER this point in the file, including
+  // dark mode setup and the side-panel toggle below. Null-check it so the
+  // rest of the script keeps initializing whether or not the button exists.
+  const filterToggleBtn = document.getElementById('filter-toggle-btn');
+  if (filterToggleBtn) {
+    function syncFilterToggleLabel() {
+      const inner = document.getElementById('filter-bar-inner');
+      const isOpen = getComputedStyle(inner).display !== 'none';
+      filterToggleBtn.textContent = isOpen ? 'Filters ▴' : 'Filters ▾';
+    }
+    filterToggleBtn.addEventListener('click', () => {
+      document.getElementById('filter-bar-wrap').classList.toggle('toggled');
+      syncFilterToggleLabel();
+    });
+    window.addEventListener('resize', syncFilterToggleLabel);
     syncFilterToggleLabel();
-  });
-  window.addEventListener('resize', syncFilterToggleLabel);
-  syncFilterToggleLabel();
+  }
 
   // ════════════════════════════════════════════════════════════
   // SIDE PANEL (Latest Updates / Data Export) COLLAPSE TOGGLE
