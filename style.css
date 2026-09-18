@@ -49,19 +49,8 @@ select, input, textarea { font-family: inherit; color: inherit; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 2px; }
 
-/* ── Top navbar (brand + global nav actions) ─────────────────── */
-:root { --navbar-h: 50px; }
-.app-navbar {
-  height: var(--navbar-h); display: flex; align-items: center; justify-content: space-between;
-  gap: 14px; padding: 0 20px; background: var(--surface); border-bottom: 1px solid var(--border);
-  position: sticky; top: 0; z-index: 70; box-shadow: var(--shadow);
-}
-.navbar-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.navbar-logo { height: 38px; width: auto; flex-shrink: 0; filter: brightness(1.15) saturate(1.1); }
-.navbar-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
-
-/* ── Freeze / filter panel (scrolls away with the page; only the navbar stays pinned) ── */
-.filter-bar-wrap { background: var(--surface-2); border-bottom: 1px solid var(--border); box-shadow: var(--shadow); }
+/* ── Freeze / filter panel (pinned so the toggle stays reachable while scrolling) ── */
+.filter-bar-wrap { background: var(--surface-2); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 50; box-shadow: var(--shadow); }
 .filter-bar-inner { display: flex; align-items: flex-start; gap: 8px; padding: 10px 20px 8px; width: 100%; }
 
 /* ── Brand card (sits left of the Year/Semester/Week block) ─── */
@@ -501,7 +490,8 @@ tr.lab-matrix-editable:hover td { background: var(--accent-light); }
   background: var(--surface); border-top: 1px solid var(--border); box-shadow: 0 -1px 3px rgba(0,0,0,.06);
   display: flex; align-items: center; justify-content: space-between; padding: 0 16px;
 }
-.bottom-bar-spacer { flex: 1; }
+.bottom-bar-left { flex: 1; display: flex; align-items: center; }
+.bottom-bar-logo { height: 26px; width: auto; flex-shrink: 0; filter: brightness(1.15) saturate(1.1); }
 .bottom-bar-center { flex: 1; display: flex; align-items: center; justify-content: center; gap: 14px; }
 .bottom-bar-right { flex: 1; display: flex; justify-content: flex-end; }
 .conn-status { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-3); font-weight: 500; }
@@ -527,7 +517,7 @@ tr.lab-matrix-editable:hover td { background: var(--accent-light); }
 
 /* ── Print styles for PDF export ─────────────────────────────── */
 @media print {
-  .app-navbar, .filter-bar-wrap, .side-column, .bottom-bar, .modal-container,
+  .filter-bar-wrap, .side-column, .bottom-bar, .modal-container,
   .cal-toolbar .btn-cal-today, .cal-toolbar .cal-view-toggle, .cal-toolbar #color-toggle { display: none !important; }
   .main-view { grid-template-columns: 1fr !important; }
   body { background: #fff; padding-bottom: 0; }
@@ -580,11 +570,6 @@ tr.lab-matrix-editable:hover td { background: var(--accent-light); }
   .tg-body { height: 56vh; min-height: 320px; }
   .cal-toolbar { flex-wrap: wrap; }
 
-  /* Navbar shrinks so brand + actions still fit on one line */
-  .app-navbar { padding: 0 10px; gap: 8px; }
-  .navbar-actions { gap: 6px; }
-  .navbar-logo { height: 30px; }
-
   /* Brand card shrinks alongside it */
   .brand-card { padding: 8px 10px 10px; min-width: 120px; }
   .brand-card-ucvm { font-size: 21px; }
@@ -595,12 +580,19 @@ tr.lab-matrix-editable:hover td { background: var(--accent-light); }
   .admin-login-btn { padding: 3px 10px; font-size: 10.5px; }
   .conn-status { font-size: 10px; }
   .btn-icon { width: 24px; height: 24px; font-size: 11px; }
+  .bottom-bar-logo { height: 20px; }
   body { padding-bottom: 44px; }
 
   /* Week: pill-button rows are too space-hungry on mobile — swap for a
      compact dropdown matching Month/Course/Type */
   #week-pill-block { display: none; }
   .mobile-only { display: flex !important; }
+
+  /* Search/Month/Course/Type/Reset: stack full-width instead of the fixed
+     90px-indented row, matching the Week dropdown's clean full-width look */
+  .filter-row { flex-direction: column; align-items: stretch; margin-left: 0; gap: 8px; }
+  .filter-row .fbar-item, .filter-row .fbar-reset { width: 100%; min-width: 0; max-width: none; align-self: stretch; }
+  .fbar-dropdown-list { left: 0; right: 0; width: auto; }
 
   /* Side panel toggle moves to a prominent bottom-anchored tab instead of
      a tiny circle that sits awkwardly close to the week view */
