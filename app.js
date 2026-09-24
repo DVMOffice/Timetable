@@ -1143,7 +1143,16 @@
     const rotationStations = stationOrder.map(topic => {
       const row = rotation.find(i => i.topic === topic);
       const primary = shortInstructorName(row.primaryInstructor, row.primaryInstructorDisplay);
-      const secondary = shortInstructorName(row.secondaryInstructor, row.secondaryInstructorDisplay);
+      // hideSecondaryOnTile is a narrow, brand-new field only a one-off
+      // admin fixer ever sets — it defaults to unset (falsy) for every
+      // existing session, so this can't change how any other lab tile
+      // renders. It exists because there's no way to make the calendar
+      // tile show NO secondary instructor while leaving the raw
+      // secondaryInstructor field (and the admin popup, which reads that
+      // field directly) untouched — an empty secondaryInstructorDisplay
+      // can't be distinguished from "not set" without risking every other
+      // session that already defaults to an empty Display field.
+      const secondary = row.hideSecondaryOnTile ? '' : shortInstructorName(row.secondaryInstructor, row.secondaryInstructorDisplay);
       return { topic, instructor: [primary, secondary ? `(${secondary})` : ''].filter(Boolean).join(' ') };
     });
 
