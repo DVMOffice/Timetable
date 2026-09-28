@@ -16,6 +16,12 @@
   };
   firebase.initializeApp(firebaseConfig);
   const db = firebase.firestore();
+  // Minimal export surface so layered files (auth-roles.js, change-requests.js,
+  // approvals.js) can reuse this Firestore instance and the existing
+  // escapeHtml/showToast helpers instead of re-implementing them. escapeHtml
+  // and showToast are function declarations, so they're hoisted and already
+  // fully defined at this point even though they're written further below.
+  window.Timetable = { db, escapeHtml, showToast };
   // Cache reads/writes locally (IndexedDB) so a repeat visit hydrates from
   // disk instead of re-downloading the whole dataset from the server.
   // synchronizeTabs:true is required here — the sentinel-doc cache-first
@@ -45,6 +51,9 @@
   const CHANGELOG_COL = 'change_log';
   const ROSTER_COL    = 'roster';
   const SETTINGS_COL  = 'settings';
+  // Collection names, so change-requests.js/approvals.js write to the same
+  // places (and log to the same history/changelog) as a direct admin edit.
+  Object.assign(window.Timetable, { SESSIONS_COL, HISTORY_COL, CHANGELOG_COL, SETTINGS_COL });
 
   const connDot  = document.getElementById('conn-dot');
   const connText = document.getElementById('conn-text');
@@ -68,6 +77,10 @@
   let calView     = 'week';
   let calDate     = new Date();
   let allSessions = [];
+  // Getter (not a snapshot) since allSessions is reassigned wholesale on
+  // every refetch — change-requests.js's swap-partner search needs the
+  // current list at search time, not whatever it was when this file loaded.
+  window.Timetable.getAllSessions = () => allSessions;
   let currentSemester = 'fall'; // 'fall' | 'winter' — drives which set of Week buttons is shown
   let filters = { search: '', year: 'all', month: 'all', week: 'all', weekSemester: 'fall', course: [], type: 'all' };
   let colorsOn = JSON.parse(localStorage.getItem('timetable_colors') ?? 'true');
@@ -213,6 +226,15 @@
     if (labels.length === 1) return `${labels[0]} updated`;
     return `${labels.slice(0,-1).join(', ')}, and ${labels[labels.length-1]} updated`;
   }
+  // The actual before/after values, not just which fields changed — this is
+  // what makes an entry useful as an audit log rather than just a hint that
+  // *something* changed. Applies uniformly to every source that calls
+  // logChangeGroup: direct admin edits, and approved topic/type/swap requests.
+  function describeChangedFieldsDetailed(fields) {
+    if (!fields || !fields.length) return '';
+    if (fields.length === 1 && fields[0].fieldLabel === '__CREATED__') return '';
+    return fields.map(f => `${f.fieldLabel}: ${f.oldValue || '—'} → ${f.newValue || '—'}`).join('  ·  ');
+  }
 
   function renderLatestUpdates() {
     const el = document.getElementById('latest-updates-body');
@@ -233,11 +255,15 @@
     el.innerHTML = updates.map((u, i) => {
       const when = u.changedAt?.toDate ? u.changedAt.toDate() : null;
       const whenStr = when ? when.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }) + ' at ' + when.toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit' }) : '—';
-      const line2 = `Changes on ${u.sessionYear ? 'Year '+u.sessionYear+' | ' : ''}${fmtShortDate(u.sessionDate)} - ${fmtTime12(u.sessionStartTime)} session recorded`;
+      const courseLabel = escapeHtml(u.course || '');
+      const topicLabel = u.sessionTopic ? ' · ' + escapeHtml(u.sessionTopic) : '';
+      const dateTimeLabel = escapeHtml(`${u.sessionYear ? 'Year '+u.sessionYear+' | ' : ''}${fmtShortDate(u.sessionDate)} - ${fmtTime12(u.sessionStartTime)}`);
+      const detail = describeChangedFieldsDetailed(u.changedFields);
       return `<div class="update-item" data-idx="${i}">
         <div class="update-line-1">Updated on ${whenStr}</div>
-        <div class="update-line-2">${escapeHtml(line2)}</div>
+        <div class="update-line-2">${courseLabel}${topicLabel} · ${dateTimeLabel}</div>
         <div class="update-line-3">${escapeHtml(describeChangedFields(u.changedFields))}</div>
+        ${detail ? `<div class="update-line-3" style="color:var(--text-2)">${escapeHtml(detail)}</div>` : ''}
       </div>`;
     }).join('');
 
@@ -258,12 +284,12 @@
   // ── Export the full Latest Updates feed (all loaded change_log entries,
   //    not just the 25 shown on screen and ignoring the panel's own filters —
   //    "export ALL updates") ──
-  const UPDATES_EXPORT_HEADERS = ['Date Changed', 'Time Changed', 'Session Year', 'Session Date', 'Session Time', 'Course', 'What Changed'];
+  const UPDATES_EXPORT_HEADERS = ['Date Changed', 'Time Changed', 'Session Year', 'Session Date', 'Session Time', 'Course', 'Topic', 'What Changed', 'Details (old → new)'];
   function updateToRow(u) {
     const when = u.changedAt?.toDate ? u.changedAt.toDate() : null;
     const whenDate = when ? when.toLocaleDateString('en-CA') : '';
     const whenTime = when ? when.toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit' }) : '';
-    return [whenDate, whenTime, u.sessionYear || '', u.sessionDate || '', fmtTime12(u.sessionStartTime), u.course || '', describeChangedFields(u.changedFields)];
+    return [whenDate, whenTime, u.sessionYear || '', u.sessionDate || '', fmtTime12(u.sessionStartTime), u.course || '', u.sessionTopic || '', describeChangedFields(u.changedFields), describeChangedFieldsDetailed(u.changedFields)];
   }
   function exportUpdatesCSV() {
     if (!latestChanges.length) { showToast('No updates to export', true); return; }
@@ -1462,8 +1488,51 @@
     return new Date(dateStr + 'T12:00:00').toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' });
   }
 
+  // Course Coordinators/Instructors can propose edits to an existing session
+  // (change-requests.js) but never write to it directly like an admin does —
+  // returns their active role profile, or null if the signed-in account
+  // isn't one. This alone does NOT mean they can request changes to any
+  // particular session — see requesterRoleForSession below.
+  function requesterRole() {
+    const r = window.Timetable && window.Timetable.getCurrentRole && window.Timetable.getCurrentRole();
+    return (!isAdmin && r && r.status === 'active' && ['cc', 'instructor'].includes(r.role)) ? r : null;
+  }
+  // Normalizes a person's name for matching: lowercases, splits into words,
+  // sorts them. This makes "David Hall" and "Hall David" compare equal —
+  // source spreadsheets list Last Name/First Name separately, so someone
+  // typing their name at signup in "Last First" order shouldn't silently
+  // fail to match session data stored as "First Last" (or vice versa).
+  // Exported so auth-roles.js (signup's nameLower) and change-requests.js
+  // (a swap's facultyBNameLower) normalize identically — a mismatch between
+  // any of the three would silently break matching again.
+  function normalizeNameForMatch(str) {
+    return String(str || '').trim().toLowerCase().split(/\s+/).filter(Boolean).sort().join(' ');
+  }
+  window.Timetable.normalizeNameForMatch = normalizeNameForMatch;
+  // A free-text instructor field can hold multiple comma-separated names
+  // (e.g. "Betty-Jo Bradley, Vinicius De Anhaia Camargo") — checks whether
+  // one of them matches the given name, word-order-insensitively.
+  function instructorFieldHasName(field, name) {
+    if (!field || !name) return false;
+    const target = normalizeNameForMatch(name);
+    if (!target) return false;
+    return String(field).split(',').some(part => normalizeNameForMatch(part) === target);
+  }
+  // Requesters may only start a request (topic/swap/type-change) from a
+  // session they're actually listed as instructor on — not any session in
+  // the timetable. Returns the role profile if both the role check and this
+  // session's instructor match their signed-in name, else null. This is
+  // client-side gating only (same caveat as requesterRole) — it hides the
+  // entry points but isn't enforced by Firestore rules.
+  function requesterRoleForSession(session) {
+    const r = requesterRole();
+    if (!r || !session) return null;
+    return (instructorFieldHasName(session.primaryInstructor, r.name) || instructorFieldHasName(session.secondaryInstructor, r.name)) ? r : null;
+  }
+
   function openDetail(session) {
     const modal = document.getElementById('modal');
+    const reqRole = requesterRoleForSession(session);
     const isLab = String(session.type||'').toUpperCase() === 'LAB';
     const showSpyHillLink = isLab && !['202','302'].includes(String(session.course));
     const sw = session.date ? calcSemesterWeek(session.date) : null;
@@ -1498,6 +1567,7 @@
           <div style="display:flex;gap:10px">
             <button class="btn btn-secondary" id="detail-close-btn">Close</button>
             ${isAdmin ? `<button class="btn btn-primary" id="detail-edit-btn">Edit Session</button>` : ''}
+            ${reqRole ? `<button class="btn btn-primary" id="detail-request-btn">Request Change</button>` : ''}
           </div>
         </div>
       </div>`;
@@ -1506,6 +1576,7 @@
     document.getElementById('modal-backdrop').onclick = closeForm;
     document.getElementById('detail-close-btn').onclick = closeForm;
     if (isAdmin) document.getElementById('detail-edit-btn').onclick = () => openForm(session);
+    if (reqRole) document.getElementById('detail-request-btn').onclick = () => window.Timetable.openChangeRequestForm && window.Timetable.openChangeRequestForm(session);
   }
 
   function closeForm() {
@@ -1596,11 +1667,14 @@
       st.cellsBySlot.get(slotKey).push(s);
     });
     const stations = [...stationMap.values()];
-    const editableClass = isAdmin ? 'lab-matrix-editable' : '';
+    // Computed per-row/per-cell below (not once for the whole table) since a
+    // requester only owns SOME stations in a multi-instructor rotation, not
+    // necessarily all of them.
+    const rowClass = s => isAdmin ? 'lab-matrix-editable' : (requesterRoleForSession(s) ? 'lab-matrix-requestable' : '');
 
     if (!withTimeColumns) {
       // SRL section — no time columns, students can take it anytime that day
-      const bodyRows = stations.map(st => `<tr class="${editableClass}" data-edit-id="${st.firstRow.id}">
+      const bodyRows = stations.map(st => `<tr class="${rowClass(st.firstRow)}" data-edit-id="${st.firstRow.id}">
         <td class="lab-matrix-station">${escapeHtml(st.topic||'')}<div class="lab-matrix-instructor">${escapeHtml(st.instructorLabel||'')}</div></td>
         <td class="lab-matrix-room">${escapeHtml(st.room||'')}</td>
       </tr>`).join('');
@@ -1621,7 +1695,7 @@
         const key = `${sl.start}|${sl.end}`;
         const matches = st.cellsBySlot.get(key) || [];
         if (!matches.length) return `<td class="lab-matrix-empty"></td>`;
-        return `<td>${matches.map(m => `<span class="${editableClass}" data-edit-id="${m.id}">${renderGroupBadge(m.group)}</span>`).join(' ')}</td>`;
+        return `<td>${matches.map(m => `<span class="${rowClass(m)}" data-edit-id="${m.id}">${renderGroupBadge(m.group)}</span>`).join(' ')}</td>`;
       }).join('');
       return `<tr>
         <td class="lab-matrix-station">${escapeHtml(st.topic||'')}<div class="lab-matrix-instructor">${escapeHtml(st.instructorLabel||'')}</div></td>
@@ -1672,7 +1746,7 @@
         <button class="modal-close" id="modal-close">✕</button>
         <div class="modal-header">
           <div class="modal-title">🧪 ${escapeHtml(courses.join(' / '))}</div>
-          <div class="modal-subtitle">${escapeHtml(sample.day||'')}, ${fmtDetailDate(sample.date)} · ${escapeHtml(semWeekLabel)}${isAdmin ? ' · <span style="color:var(--accent);font-weight:600">Admin: click any cell or row to edit it</span>' : ''}</div>
+          <div class="modal-subtitle">${escapeHtml(sample.day||'')}, ${fmtDetailDate(sample.date)} · ${escapeHtml(semWeekLabel)}${isAdmin ? ' · <span style="color:var(--accent);font-weight:600">Admin: click any cell or row to edit it</span>' : (requesterRole() ? ' · <span style="color:var(--accent);font-weight:600">Click any of your own stations to request a change</span>' : '')}</div>
         </div>
         <div class="modal-body">
           ${sections}
@@ -1695,6 +1769,14 @@
           e.stopPropagation();
           const target = allSessions.find(s => s.id === el.dataset.editId);
           if (target) openForm(target);
+        });
+      });
+    } else if (requesterRole()) {
+      modal.querySelectorAll('.lab-matrix-requestable').forEach(el => {
+        el.addEventListener('click', e => {
+          e.stopPropagation();
+          const target = allSessions.find(s => s.id === el.dataset.editId);
+          if (target && window.Timetable.openChangeRequestForm) window.Timetable.openChangeRequestForm(target);
         });
       });
     }
@@ -1809,12 +1891,17 @@
     await db.collection(CHANGELOG_COL).add({
       sessionId: session.id,
       course: `${session.course} - ${session.courseName||''}`,
+      sessionTopic: session.topic || '',
       sessionYear: session.year, sessionType: session.type, sessionStartTime: session.startTime,
       sessionDate: session.date, sessionWeek: session.week,
       changedFields: changes.map(c => ({ fieldLabel: c.fieldLabel, oldValue: c.oldValue, newValue: c.newValue })),
       changedAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
   }
+  // change-requests.js reuses these so a requested edit produces the exact
+  // same diff shape and Latest Updates entry as a direct admin edit;
+  // approvals.js reuses logChangeGroup when it applies an approved request.
+  Object.assign(window.Timetable, { FIELD_LABELS, detectChanges, logChangeGroup });
 
   async function saveSession(existing) {
     const statusEl = document.getElementById('save-status');
@@ -1944,7 +2031,12 @@
   let isAdmin = false;
 
   firebase.auth().onAuthStateChanged(user => {
-    isAdmin = !!user;
+    // Now that other roles (CC, Instructor, ADFAD, DVM Program Office, ADC —
+    // see auth-roles.js) also sign in through this same firebase.auth()
+    // instance, isAdmin must check *which* account signed in, not just
+    // whether any account did — otherwise a self-signed-up CC/Instructor
+    // account would incorrectly get full admin edit/delete/import powers.
+    isAdmin = !!user && user.email === ADMIN_EMAIL;
     updateAdminUI();
   });
 
@@ -1983,15 +2075,20 @@
     if (!isAdmin) return;
     const banner = document.createElement('div');
     banner.id = 'admin-banner';
-    banner.style.cssText = `display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 16px;border-radius:8px;margin-bottom:12px;font-size:12.5px;border:1px solid #BFDBFE;background:#EFF6FF;color:#1E40AF;`;
+    banner.style.cssText = `display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:9px 16px;border-radius:8px;margin-bottom:12px;font-size:12.5px;border:1px solid #BFDBFE;background:#EFF6FF;color:#1E40AF;`;
     banner.innerHTML = `<span>⚙ <strong>Admin mode active</strong> — click any session to view and edit it.</span>
-      <span style="display:flex;gap:8px">
+      <span style="display:flex;flex-wrap:wrap;gap:8px">
         <button id="year2-diagnostic-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">📊 Export Lab Diagnostic (Year 2 + 505)</button>
         <button id="fix-lab-years-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔍 Fix Lab Year Duplicates</button>
         <button id="clear-secondary-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🧹 Clear Leaked Secondary Instructor (315/317/319)</button>
         <button id="delete-505-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔨 Delete 505 Rows (for rebuild)</button>
         <button id="delete-200-aug2728-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🔨 Delete 200 Aug 27/28 (for rebuild)</button>
         <button id="import-csv-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">⬆ Import CSV</button>
+        <button id="pending-accounts-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">👤 Pending Accounts</button>
+        <button id="authorized-users-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">📋 Authorized Users</button>
+        <button id="access-requests-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">🙋 Access Requests</button>
+        <button id="task-checklist-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">✅ Task Checklist</button>
+        <button id="audit-log-btn" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;white-space:nowrap">📜 Audit Log</button>
       </span>`;
     const col = document.querySelector('.cal-column');
     col.insertBefore(banner, col.firstChild);
@@ -2001,6 +2098,11 @@
     document.getElementById('clear-secondary-btn').addEventListener('click', clearYear2SickAnimalsSecondaryInstructor);
     document.getElementById('delete-505-btn').addEventListener('click', delete505RowsForRebuild);
     document.getElementById('delete-200-aug2728-btn').addEventListener('click', delete200Aug2728ForRebuild);
+    document.getElementById('pending-accounts-btn').addEventListener('click', () => window.Timetable.openPendingAccounts?.());
+    document.getElementById('authorized-users-btn').addEventListener('click', () => window.Timetable.openAuthorizedUsersImport?.());
+    document.getElementById('access-requests-btn').addEventListener('click', () => window.Timetable.openAccessRequests?.());
+    document.getElementById('task-checklist-btn').addEventListener('click', () => window.Timetable.openTaskChecklist?.());
+    document.getElementById('audit-log-btn').addEventListener('click', () => window.Timetable.openAdminAuditLog?.());
   }
 
   // One-time cleanup: the *correct* SRL data is the original 1-hour entries
@@ -2509,6 +2611,9 @@
     if (field.length || row.length) { row.push(field); rows.push(row); }
     return rows.filter(r => r.length > 1 || r[0] !== '');
   }
+  // auth-roles.js reuses this quoted-field-aware parser for the authorized-
+  // users CSV import instead of a second hand-rolled one.
+  window.Timetable.parseCSV = parseCSV;
 
   function mapCsvToSessions(rows) {
     const headers = rows[0].map(h => h.trim().toLowerCase());

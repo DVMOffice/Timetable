@@ -386,9 +386,9 @@ html.dark .catalog-group-legacy .catalog-table tbody tr:not(.catalog-total-row) 
 .lab-matrix-instructor { font-size: 11px; color: var(--text-3); font-weight: 500; margin-top: 2px; }
 .lab-matrix-room { color: var(--text-2); font-size: 11.5px; white-space: nowrap; }
 .lab-matrix-empty { background: var(--surface-2); }
-.lab-matrix-editable { cursor: pointer; transition: outline var(--transition); border-radius: 4px; }
-.lab-matrix-editable:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
-tr.lab-matrix-editable:hover td { background: var(--accent-light); }
+.lab-matrix-editable, .lab-matrix-requestable { cursor: pointer; transition: outline var(--transition); border-radius: 4px; }
+.lab-matrix-editable:hover, .lab-matrix-requestable:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
+tr.lab-matrix-editable:hover td, tr.lab-matrix-requestable:hover td { background: var(--accent-light); }
 .roster-editable-cell { cursor: pointer; transition: background var(--transition); }
 .roster-editable-cell:hover { background: var(--accent-light); }
 
