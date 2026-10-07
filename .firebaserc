@@ -1,0 +1,7 @@
+{
+  "projects": {
+    "staging": "ucvm-timetable-staging"
+  },
+  "targets": {},
+  "etags": {}
+}

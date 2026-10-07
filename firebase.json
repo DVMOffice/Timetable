@@ -1,0 +1,26 @@
+{
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "hosting": {
+    "public": ".",
+    "ignore": [
+      ".git",
+      ".firebase",
+      "node_modules",
+      "firebase.json",
+      ".firebaserc",
+      "firebase-debug.log",
+      "firebase-debug.*.log",
+      "package.json",
+      "package-lock.json",
+      "scripts/**",
+      "docs/**",
+      "data-feed.html",
+      "*.service-account.json",
+      "service-account*.json",
+      "staging-allowlist*.json",
+      "staging-refresh-backup*.json"
+    ]
+  }
+}

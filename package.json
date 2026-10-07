@@ -1,0 +1,13 @@
+{
+  "name": "ucvm-timetable-operations",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "staging:refresh": "node scripts/refresh-staging.mjs",
+    "staging:allowlist": "node scripts/seed-staging-allowlist.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.2"
+  }
+}

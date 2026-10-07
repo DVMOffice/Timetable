@@ -6,14 +6,16 @@
   // ════════════════════════════════════════════════════════════
   // FIREBASE SETUP
   // ════════════════════════════════════════════════════════════
-  const firebaseConfig = {
-    apiKey: "AIzaSyBqLdbPBn2V8tPSlJ8Q2LEmBKy1o7FtEa0",
-    authDomain: "timetable-23438.firebaseapp.com",
-    projectId: "timetable-23438",
-    storageBucket: "timetable-23438.firebasestorage.app",
-    messagingSenderId: "577386132793",
-    appId: "1:577386132793:web:c59f591e1450fcf88424e8"
-  };
+  
+  const environment = window.TIMETABLE_ENVIRONMENT;
+  if (!environment || !['staging', 'production'].includes(environment.name) ||
+      !environment.adminEmail || !environment.firebaseConfig || !environment.firebaseConfig.projectId) {
+    throw new Error('Missing or invalid environment.js. Refusing to select a Firebase project.');
+  }
+  const APP_ENV = environment.name;
+  const firebaseConfig = environment.firebaseConfig;
+
+
   firebase.initializeApp(firebaseConfig);
   const db = firebase.firestore();
   // Minimal export surface so layered files (auth-roles.js, change-requests.js,
@@ -21,7 +23,7 @@
   // escapeHtml/showToast helpers instead of re-implementing them. escapeHtml
   // and showToast are function declarations, so they're hoisted and already
   // fully defined at this point even though they're written further below.
-  window.Timetable = { db, escapeHtml, showToast };
+  window.Timetable = { db, escapeHtml, showToast, APP_ENV, ADMIN_EMAIL: environment.adminEmail };
   // Cache reads/writes locally (IndexedDB) so a repeat visit hydrates from
   // disk instead of re-downloading the whole dataset from the server.
   // synchronizeTabs:true is required here — the sentinel-doc cache-first
@@ -103,9 +105,31 @@
   // they don't match (or nothing's cached yet, e.g. a brand-new
   // browser), we do a real server fetch and remember the new version.
   const WINTER_START_KEY = dateKey(weekMondaySem('winter', 1));
-  const SESSIONS_VERSION_KEY = 'timetable_sessions_version';
+  const SESSIONS_VERSION_KEY = `timetable_${APP_ENV}_sessions_version`;
+  // The staging refresh tool writes this maintenance document before its
+  // multi-batch copy. Do not read a partially refreshed staging dataset.
+  let stagingRefreshState = APP_ENV === 'staging' ? 'unknown' : 'idle';
+  let sessionsRefreshPending = false;
+  let latestSessionsVersion = '';
+
+  function stagingRefreshBlocksSessions() {
+    return APP_ENV === 'staging' && stagingRefreshState !== 'idle';
+  }
+
+  function showStagingMaintenance(state) {
+    connDot.className = state === 'failed' ? 'conn-dot error' : 'conn-dot';
+    connText.textContent = state === 'failed'
+      ? 'Staging refresh needs attention'
+      : 'Staging refresh in progress';
+  }
 
   async function refreshSessions(semester, source) {
+    if (stagingRefreshBlocksSessions()) {
+      sessionsRefreshPending = true;
+      console.log(`[staging refresh] session read deferred (${stagingRefreshState})`);
+      showStagingMaintenance(stagingRefreshState);
+      return false;
+    }
     // Temp debug, remove before merging to main. Makes it obvious in the
     // console which path each refetch actually took.
     console.log(`%c[sentinel] refreshSessions(${semester}, ${source})`, 'color:#0a7');
@@ -142,45 +166,86 @@
       populateWeekButtons();
       populateUpdatesFilters();
       renderAll();
+      return true;
     } catch (err) {
       console.error('[Firestore] refreshSessions error', err);
       connDot.className = 'conn-dot error';
       connText.textContent = 'Connection error';
       showToast('Could not connect to the database', true);
+      return false;
     }
   }
 
   let sessionsVersionInitialized = false;
   let sessionsRefetchTimer = null;
+  function runSessionsRefresh(source, liveVersion, debounce) {
+    clearTimeout(sessionsRefetchTimer);
+    const run = () => refreshSessions(currentSemester, source).then(succeeded => {
+      // Do not mark a version cached after a failed/deferred server request.
+      if (succeeded && liveVersion) localStorage.setItem(SESSIONS_VERSION_KEY, liveVersion);
+    });
+    if (debounce) sessionsRefetchTimer = setTimeout(run, 1800); else run();
+  }
+
+  function subscribeStagingRefresh() {
+    if (APP_ENV !== 'staging') return;
+    db.collection(SETTINGS_COL).doc('stagingRefresh').onSnapshot(doc => {
+      const previousState = stagingRefreshState;
+      const requestedState = doc.exists ? String(doc.data().status || 'idle') : 'idle';
+      stagingRefreshState = ['refreshing', 'failed'].includes(requestedState) ? requestedState : 'idle';
+      if (stagingRefreshBlocksSessions()) {
+        showStagingMaintenance(stagingRefreshState);
+        return;
+      }
+      // The sentinel and maintenance state live in separate documents. Their
+      // listener callbacks can arrive in either order, so release always
+      // fetches from the server after a blocked period.
+      if (previousState !== 'idle' && sessionsVersionInitialized) {
+        sessionsRefreshPending = false;
+        runSessionsRefresh('server', latestSessionsVersion, false);
+      }
+    }, err => {
+      stagingRefreshState = 'failed';
+      sessionsRefreshPending = true;
+      console.error('[Staging refresh listener error]', err);
+      showStagingMaintenance('failed');
+    });
+  }
+
   function subscribeSessionsVersion() {
     db.collection(SETTINGS_COL).doc('sessionsVersion').onSnapshot(doc => {
       const liveVersion = doc.exists ? String(doc.data().updatedAt?.toMillis?.() ?? '') : '';
+      latestSessionsVersion = liveVersion;
       const cachedVersion = localStorage.getItem(SESSIONS_VERSION_KEY);
       const isFirstFire = !sessionsVersionInitialized;
       sessionsVersionInitialized = true;
       // TEMP DEBUG — remove before merging to main.
       console.log(`%c[sentinel] version fired: live=${liveVersion || '(none)'} cached=${cachedVersion || '(none)'} firstFire=${isFirstFire}`, 'color:#06c');
 
+      if (stagingRefreshBlocksSessions()) {
+        sessionsRefreshPending = true;
+        showStagingMaintenance(stagingRefreshState);
+        return;
+      }
+
       if (liveVersion && liveVersion === cachedVersion) {
         // Sentinel unchanged since our last confirmed sync — local cache
         // is still valid, read it for free.
-        refreshSessions(currentSemester, 'cache');
+        runSessionsRefresh('cache', '', false);
         return;
       }
       // First-ever visit for this browser (nothing cached yet), or the
       // sentinel genuinely moved and the data actually changed — go to
       // the server. Debounce only real changes, not the initial load,
       // so several rapid writes collapse into one refetch.
-      clearTimeout(sessionsRefetchTimer);
-      const run = () => refreshSessions(currentSemester, 'server')
-        .then(() => { if (liveVersion) localStorage.setItem(SESSIONS_VERSION_KEY, liveVersion); });
-      if (isFirstFire) run(); else sessionsRefetchTimer = setTimeout(run, 1800);
+      runSessionsRefresh('server', liveVersion, !isFirstFire);
     }, err => {
       console.error('[Sessions version listener error]', err);
       connDot.className = 'conn-dot error';
       connText.textContent = 'Connection error';
     });
   }
+  subscribeStagingRefresh();
   subscribeSessionsVersion();
   subscribeRosterNotice();
   // Roster listener is started lazily (see startRosterListener) the first
@@ -2027,7 +2092,7 @@
   // control (anyone could read it straight out of this public file).
   // The single-prompt UX is kept for familiarity: one admin account, so
   // only the password is asked for and paired with the fixed email below.
-  const ADMIN_EMAIL = 'dvmprogram@ucalgary.ca';
+  const ADMIN_EMAIL = environment.adminEmail;
   let isAdmin = false;
 
   firebase.auth().onAuthStateChanged(user => {

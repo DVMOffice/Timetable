@@ -1,0 +1,47 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() { return request.auth != null; }
+    function myRole() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role; }
+    function myNameLower() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.nameLower; }
+    function isAdmin() { return isSignedIn() && request.auth.token.email == 'dvmprogram@ucalgary.ca'; }
+    function isApprover() { return isSignedIn() && myRole() in ['adfad', 'dvm_office', 'adc']; }
+    function writesAllowed() {
+      return !exists(/databases/$(database)/documents/settings/stagingRefresh)
+        || !(get(/databases/$(database)/documents/settings/stagingRefresh).data.status in ['refreshing', 'failed']);
+    }
+
+    match /sessions/{id}         { allow read: if true; allow write: if isAdmin() && writesAllowed(); }
+    match /sessions_history/{id} { allow read: if true; allow write: if isAdmin() && writesAllowed(); }
+    match /change_log/{id}       { allow read: if true; allow write: if isAdmin() && writesAllowed(); }
+    match /settings/{id}         { allow read: if true; allow write: if isAdmin() && writesAllowed(); }
+    match /roster/{id}           { allow read: if true; allow write: if isAdmin() && writesAllowed(); }
+
+    match /authorized_users/{email} {
+      allow get: if isSignedIn();
+      allow list, write: if isAdmin() && writesAllowed();
+    }
+    match /access_requests/{id} {
+      allow create: if writesAllowed();
+      allow read, update: if isAdmin() && writesAllowed();
+    }
+    match /change_requests/{id} {
+      allow create: if isSignedIn() && writesAllowed();
+      allow read: if isSignedIn();
+      allow update: if writesAllowed() && (isApprover() || isAdmin()
+        || (isSignedIn() && resource.data.facultyBNameLower == myNameLower()));
+    }
+    match /users/{uid} {
+      allow get: if isSignedIn();
+      allow list: if isAdmin();
+      allow create: if isSignedIn() && request.auth.uid == uid && writesAllowed();
+      allow update: if isAdmin() && writesAllowed();
+      allow delete: if writesAllowed() && (isAdmin() || (isSignedIn() && request.auth.uid == uid));
+    }
+    match /admin_audit_log/{id} {
+      allow create: if writesAllowed() && (isAdmin() || isApprover());
+      allow read: if isAdmin();
+    }
+  }
+}

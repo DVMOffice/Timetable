@@ -32,9 +32,42 @@
   };
   firebase.initializeApp(firebaseConfig);
   const db = firebase.firestore();
+  // Best-effort local cache, same as the main app — helps if Power Query's
+  // rendering engine reuses the same browser profile/storage across
+  // separate refreshes of this connection. If it doesn't, this falls
+  // through to the exact same behavior as before (no regression either way).
+  db.enablePersistence().catch(() => {});
+
+  const SESSIONS_VERSION_KEY = 'timetable_sessions_version';
 
   try {
-    const snap = await db.collection('sessions').get();
+    // Check the same sentinel doc the main app uses (settings/sessionsVersion,
+    // bumped by every write to `sessions`) before deciding whether it's safe
+    // to read the full collection from the local cache instead of the
+    // server. Full history is always returned either way — this only ever
+    // changes *whether* a read happens, never what data comes back.
+    const versionDoc = await db.collection('settings').doc('sessionsVersion').get();
+    const liveVersion = versionDoc.exists ? String(versionDoc.data().updatedAt?.toMillis?.() ?? '') : '';
+    const cachedVersion = localStorage.getItem(SESSIONS_VERSION_KEY);
+
+    let snap;
+    if (liveVersion && liveVersion === cachedVersion) {
+      try {
+        snap = await db.collection('sessions').get({ source: 'cache' });
+        if (snap.empty) throw new Error('empty-cache-result');
+        console.log(`[data-feed] served from cache — ${snap.size} docs`); // TEMP DEBUG
+      } catch (cacheErr) {
+        // Nothing usable cached for this browser context — fall back to a
+        // real fetch rather than silently returning nothing.
+        console.log('[data-feed] cache miss/empty, falling back to server'); // TEMP DEBUG
+        snap = await db.collection('sessions').get({ source: 'server' });
+        console.log(`[data-feed] served from server — ${snap.size} docs`); // TEMP DEBUG
+      }
+    } else {
+      snap = await db.collection('sessions').get({ source: 'server' });
+      if (liveVersion) localStorage.setItem(SESSIONS_VERSION_KEY, liveVersion);
+      console.log(`[data-feed] served from server — ${snap.size} docs`); // TEMP DEBUG
+    }
     const rows = snap.docs.map(doc => {
       const d = doc.data();
       return {

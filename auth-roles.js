@@ -12,7 +12,7 @@
   const AUTHORIZED_USERS_COL = 'authorized_users';
   const ACCESS_REQUESTS_COL = 'access_requests';
   const ADMIN_AUDIT_COL = 'admin_audit_log';
-  const ADMIN_EMAIL = 'dvmprogram@ucalgary.ca';
+  const ADMIN_EMAIL = window.Timetable.ADMIN_EMAIL || 'dvmprogram@ucalgary.ca';
   const ROLE_LABELS = {
     cc: 'Course Coordinator',
     instructor: 'Instructor',
