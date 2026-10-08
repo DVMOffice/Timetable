@@ -551,8 +551,13 @@
     document.getElementById('detail-close-btn').onclick = closeForm;
   }
 
-  // Prefer the stored last-name-only display field (new lab data); fall back
-  // to deriving one from the full name for older sessions that don't have it.
+  // Always derive the last-name-only form from the full name, which is the
+  // same field the detail popup and the Edit form use. The stored
+  // primaryInstructorDisplay / secondaryInstructorDisplay fields (written
+  // once by the CSV import) are intentionally ignored: the Edit form never
+  // updates them, so after an instructor edit they went stale and the
+  // calendar tile showed old names while the popup showed the new ones.
+  // The `display` parameter is kept so existing callers don't need to change.
   //
   // 'full' can hold MULTIPLE comma-separated names (e.g. a rotation
   // station's secondary instructor list: "Betty-Jo Bradley, Erin
@@ -560,8 +565,7 @@
   // Each name is shortened to its own last word independently — taking
   // the last word of the WHOLE string would collapse all of them down
   // to just the final person, silently dropping everyone else in the list.
-  function shortInstructorName(full, display) {
-    if (display) return display;
+  function shortInstructorName(full) {
     if (!full) return '';
     return full.split(',')
       .map(part => part.trim())
