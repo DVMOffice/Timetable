@@ -4,13 +4,15 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { initializeApp, cert, deleteApp } from 'firebase-admin/app';
-import { getFirestore, FieldValue, Timestamp, GeoPoint } from 'firebase-admin/firestore';
+import { getFirestore, Timestamp, GeoPoint } from 'firebase-admin/firestore';
+import { createAdminDb, compat, loadSupabaseEnv } from './supabase-admin.mjs';
 
 const SOURCE_PROJECT = 'timetable-23438';
 const TARGET_PROJECT = 'ucvm-timetable-staging';
 const MIRROR_COLLECTIONS = ['sessions', 'roster'];
 const CLEAR_COLLECTIONS = ['sessions_history', 'change_log', 'change_requests', 'access_requests', 'admin_audit_log'];
 const BATCH_SIZE = 400;
+const SERVER_NOW = compat.SERVER_TS_SENTINEL;
 
 function option(name) {
   const index = process.argv.indexOf(name);
@@ -39,8 +41,13 @@ function loadCredential(envName, expectedProject) {
   });
 }
 
+// Timestamps compare at millisecond precision and by duck type: one side of a
+// comparison is the firebase-admin Timestamp, the other the supabase-compat one.
 function encode(value) {
-  if (value instanceof Timestamp) return { __type: 'timestamp', seconds: value.seconds, nanoseconds: value.nanoseconds };
+  if (value && typeof value.toMillis === 'function') {
+    const ms = value.toMillis();
+    return { __type: 'timestamp', seconds: Math.floor(ms / 1000), nanoseconds: (ms % 1000) * 1e6 };
+  }
   if (value instanceof GeoPoint) return { __type: 'geoPoint', latitude: value.latitude, longitude: value.longitude };
   if (Buffer.isBuffer(value)) return { __type: 'buffer', base64: value.toString('base64') };
   if (value && typeof value.path === 'string' && value.firestore) return { __type: 'reference', path: value.path };
@@ -152,7 +159,7 @@ async function acquireLock(db, runId) {
     if (status === 'refreshing' || status === 'failed') {
       throw new Error(`Refresh lock is ${status}. Inspect settings/stagingRefresh before running again.`);
     }
-    transaction.set(ref, { status: 'refreshing', runId, startedAt: FieldValue.serverTimestamp(), error: null }, { merge: true });
+    transaction.set(ref, { status: 'refreshing', runId, startedAt: SERVER_NOW, error: null }, { merge: true });
   });
 }
 
@@ -166,16 +173,22 @@ async function restoreSnapshot(db, snapshot) {
   else await rosterNoticeRef.delete();
 }
 
+// environment.js on this branch is the record of which project staging uses.
+async function assertTargetIsStaging() {
+  const { url } = loadSupabaseEnv();
+  const environment = await readFile(new URL('../environment.js', import.meta.url), 'utf8');
+  if (!environment.includes("name: 'staging'") || !environment.includes(`url: '${url}'`)) {
+    throw new Error('SUPABASE_URL does not match the staging project in environment.js.');
+  }
+}
+
 async function main() {
   if (apply && confirmation !== TARGET_PROJECT) return usage(`--confirm-target ${TARGET_PROJECT} is required for writes.`);
-  const [sourceCredential, targetCredential] = await Promise.all([
-    loadCredential('TIMETABLE_PROD_SERVICE_ACCOUNT', SOURCE_PROJECT),
-    loadCredential('TIMETABLE_STAGING_SERVICE_ACCOUNT', TARGET_PROJECT)
-  ]);
+  await assertTargetIsStaging();
+  const sourceCredential = await loadCredential('TIMETABLE_PROD_SERVICE_ACCOUNT', SOURCE_PROJECT);
   const sourceApp = initializeApp({ credential: cert(sourceCredential), projectId: SOURCE_PROJECT }, 'production-source');
-  const targetApp = initializeApp({ credential: cert(targetCredential), projectId: TARGET_PROJECT }, 'staging-target');
   const sourceDb = getFirestore(sourceApp);
-  const targetDb = getFirestore(targetApp);
+  const { db: targetDb } = createAdminDb();
   const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${crypto.randomUUID()}`;
   let backupPath = null;
   let locked = false;
@@ -214,9 +227,9 @@ async function main() {
     // This is the only write to settings/sessionsVersion in the entire tool.
     // It happens after every selected collection has copied and verified.
     const finalBatch = targetDb.batch();
-    finalBatch.set(targetDb.collection('settings').doc('sessionsVersion'), { updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    finalBatch.set(targetDb.collection('settings').doc('sessionsVersion'), { updatedAt: SERVER_NOW }, { merge: true });
     finalBatch.set(targetDb.collection('settings').doc('stagingRefresh'), {
-      status: 'idle', runId, finishedAt: FieldValue.serverTimestamp(), error: null
+      status: 'idle', runId, finishedAt: SERVER_NOW, error: null
     }, { merge: true });
     await finalBatch.commit();
     locked = false;
@@ -229,13 +242,13 @@ async function main() {
       try {
         const backup = JSON.parse(await readFile(backupPath, 'utf8'));
         await restoreSnapshot(targetDb, decode(backup.snapshot, targetDb));
-        await setRefreshState(targetDb, { status: 'idle', rollbackAt: FieldValue.serverTimestamp(), error: error.message });
+        await setRefreshState(targetDb, { status: 'idle', rollbackAt: SERVER_NOW, error: error.message });
         locked = false;
         await rm(backupPath, { force: true });
         backupPath = null;
         console.error('Rollback succeeded. sessionsVersion was left unchanged.');
       } catch (rollbackError) {
-        await setRefreshState(targetDb, { status: 'failed', failedAt: FieldValue.serverTimestamp(), error: `${error.message}; rollback failed: ${rollbackError.message}` }).catch(() => {});
+        await setRefreshState(targetDb, { status: 'failed', failedAt: SERVER_NOW, error: `${error.message}; rollback failed: ${rollbackError.message}` }).catch(() => {});
         console.error(`Rollback failed. Maintenance gate remains active; backup retained at ${backupPath}.`);
       }
     }
@@ -245,7 +258,7 @@ async function main() {
     }
     process.exitCode = 1;
   } finally {
-    await Promise.allSettled([deleteApp(sourceApp), deleteApp(targetApp)]);
+    await deleteApp(sourceApp).catch(() => {});
   }
 }
 

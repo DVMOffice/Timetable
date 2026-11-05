@@ -5,9 +5,16 @@
   "scripts": {
     "staging:refresh": "node scripts/refresh-staging.mjs",
     "staging:allowlist": "node scripts/seed-staging-allowlist.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test --test-force-exit test/*.test.mjs",
+    "db:export": "node db/export-firestore.mjs",
+    "db:migrate": "node db/migrate-to-supabase.mjs"
   },
   "dependencies": {
+    "@supabase/supabase-js": "2.119.0",
     "firebase-admin": "^13.0.2"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.15",
+    "jsdom": "^29.1.1"
   }
 }

@@ -1,6 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { initializeApp, cert, deleteApp } from 'firebase-admin/app';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { createAdminDb } from './supabase-admin.mjs';
 
 const TARGET_PROJECT = 'ucvm-timetable-staging';
 const VALID_ROLES = new Set(['cc', 'instructor', 'adfad', 'dvm_office', 'adc']);
@@ -32,26 +31,17 @@ async function main() {
   console.table(users);
   if (!apply) { console.log('Dry run complete. Re-run with --apply --confirm-target ucvm-timetable-staging to write staging only.'); return; }
   if (confirmation !== TARGET_PROJECT) fail(`--confirm-target ${TARGET_PROJECT} is required.`);
-  const credentialPath = process.env.TIMETABLE_STAGING_SERVICE_ACCOUNT;
-  if (!credentialPath) fail('TIMETABLE_STAGING_SERVICE_ACCOUNT must point to a staging service-account JSON file.');
-  const account = JSON.parse(await readFile(credentialPath, 'utf8'));
-  if (account.project_id !== TARGET_PROJECT) fail(`Credential project must be ${TARGET_PROJECT}.`);
-  const app = initializeApp({ credential: cert(account), projectId: TARGET_PROJECT }, 'staging-allowlist');
-  const db = getFirestore(app);
-  try {
-    for (let index = 0; index < users.length; index += 400) {
-      const batch = db.batch();
-      for (const user of users.slice(index, index + 400)) {
-        batch.set(db.collection('authorized_users').doc(user.email), {
-          ...user, importedAt: FieldValue.serverTimestamp(), importedBy: 'staging-bootstrap'
-        }, { merge: true });
-      }
-      await batch.commit();
+  const { db, serverTimestamp } = createAdminDb();
+  for (let index = 0; index < users.length; index += 400) {
+    const batch = db.batch();
+    for (const user of users.slice(index, index + 400)) {
+      batch.set(db.collection('authorized_users').doc(user.email), {
+        ...user, importedAt: serverTimestamp(), importedBy: 'staging-bootstrap'
+      }, { merge: true });
     }
-    console.log(`Seeded ${users.length} staging allowlist entries. No Firebase Auth users were created.`);
-  } finally {
-    await deleteApp(app);
+    await batch.commit();
   }
+  console.log(`Seeded ${users.length} staging allowlist entries. No login accounts were created.`);
 }
 
 main().catch(error => { console.error(`Allowlist bootstrap failed: ${error.message}`); process.exitCode = 1; });

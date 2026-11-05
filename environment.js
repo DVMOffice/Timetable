@@ -8,6 +8,10 @@
   window.TIMETABLE_ENVIRONMENT = Object.freeze({
     name: 'staging',
     adminEmail: 'dvmprogram@ucalgary.ca',
+    supabase: {
+      url: 'https://cfpqlnfgjfjndobgchib.supabase.co',
+      publishableKey: 'sb_publishable_mL4UWfd7B-EIzHL11O8z-g_ZJlfJvx_'
+    },
     firebaseConfig: {
       apiKey: 'AIzaSyBaUh041muZ0fPKOBZDTn1rLkQXjgWKP98',
       authDomain: 'ucvm-timetable-staging.firebaseapp.com',
