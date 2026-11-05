@@ -1603,15 +1603,37 @@
     return String(str || '').trim().toLowerCase().split(/\s+/).filter(Boolean).sort().join(' ');
   }
   window.Timetable.normalizeNameForMatch = normalizeNameForMatch;
-  // A free-text instructor field can hold multiple comma-separated names
-  // (e.g. "Betty-Jo Bradley, Vinicius De Anhaia Camargo") — checks whether
-  // one of them matches the given name, word-order-insensitively.
+  // Splits a name/field into lowercase word tokens, treating anything that
+  // isn't a letter, digit, hyphen, apostrophe or period as a separator (so
+  // "Name)" and "(Name" tokenize the same as "Name").
+  function nameTokens(str) {
+    return String(str || '').toLowerCase().split(/[^\p{L}\p{N}'’.-]+/u).filter(Boolean);
+  }
+  // A free-text instructor field is messy in real data: several names
+  // separated by commas/semicolons/newlines/"+", parentheses
+  // ("Alanna Zantingh (Erin Fierheller, Holly Sparks)"), and role labels
+  // ("Eq: Alanna Zantingh, SA: Crystal Makwana"). So instead of requiring a
+  // whole comma-separated chunk to equal the name, split into chunks and
+  // check that ALL of the name's words appear in ONE chunk — word-order and
+  // extra-word insensitive ("Vinicius Camargo" matches "Vinicius De Anhaia
+  // Camargo)"), but words spread across different people don't combine.
   function instructorFieldHasName(field, name) {
     if (!field || !name) return false;
-    const target = normalizeNameForMatch(name);
-    if (!target) return false;
-    return String(field).split(',').some(part => normalizeNameForMatch(part) === target);
+    const target = nameTokens(name);
+    if (!target.length) return false;
+    return String(field).split(/[,;:\n\r+/]/).some(chunk => {
+      const have = new Set(nameTokens(chunk));
+      return target.every(t => have.has(t));
+    });
   }
+  // Best-effort "first named person" in a messy instructor field — used to
+  // pick Faculty B for a swap. Takes the text before the first separator
+  // and drops a leading "Label:" ("Eq: Alanna Zantingh" -> "Alanna Zantingh").
+  function extractLeadInstructorName(field) {
+    const first = String(field || '').split(/[,;(\n\r+]/)[0] || '';
+    return first.replace(/^[^:]*:/, '').replace(/[()]/g, '').trim();
+  }
+  window.Timetable.extractLeadInstructorName = extractLeadInstructorName;
   // Requesters may only start a request (topic/swap/type-change) from a
   // session they're actually listed as instructor on — not any session in
   // the timetable. Returns the role profile if both the role check and this
@@ -1621,7 +1643,11 @@
   function requesterRoleForSession(session) {
     const r = requesterRole();
     if (!r || !session) return null;
-    return (instructorFieldHasName(session.primaryInstructor, r.name) || instructorFieldHasName(session.secondaryInstructor, r.name)) ? r : null;
+    // Non-lab sessions usually keep the instructor ONLY in finalizedInstructors
+    // (the popup shows that field for them), so it has to be checked too.
+    return (instructorFieldHasName(session.primaryInstructor, r.name)
+      || instructorFieldHasName(session.secondaryInstructor, r.name)
+      || instructorFieldHasName(session.finalizedInstructors, r.name)) ? r : null;
   }
 
   function openDetail(session) {

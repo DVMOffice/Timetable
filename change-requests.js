@@ -289,7 +289,12 @@
       const checked = [...document.querySelectorAll('.sw-field-cb:checked')].map(cb => cb.value);
       if (!sessionB) { statusEl.className = 'save-status error'; statusEl.textContent = 'Pick a session to swap with'; return; }
       if (!checked.length) { statusEl.className = 'save-status error'; statusEl.textContent = 'Check at least one thing to swap'; return; }
-      const facultyBName = (sessionB.primaryInstructor || '').trim();
+      // Non-lab sessions usually have no primaryInstructor (only
+      // finalizedInstructors), and either field can hold messy text like
+      // "Name (Other, Other)" — so take the lead named person from whichever
+      // has one, not the raw string.
+      const leadName = window.Timetable.extractLeadInstructorName || (s => (s || '').trim());
+      const facultyBName = leadName(sessionB.primaryInstructor) || leadName(sessionB.finalizedInstructors);
       if (!facultyBName) { statusEl.className = 'save-status error'; statusEl.textContent = 'That session has no named instructor to request approval from — pick a different one'; return; }
       const swapFields = checked.flatMap(key => SWAP_FIELD_GROUPS.find(g => g.key === key).fields);
       const swapFieldLabels = checked.map(key => SWAP_FIELD_GROUPS.find(g => g.key === key).label);
